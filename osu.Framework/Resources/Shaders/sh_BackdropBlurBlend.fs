@@ -17,11 +17,11 @@ layout(std140, set = 0, binding = 0) uniform m_BlendParameters
 	lowp float g_BackdropTintStrength;
 };
 
-layout(set = 2, binding = 0) uniform lowp texture2D m_Texture;
-layout(set = 2, binding = 1) uniform lowp sampler m_Sampler;
+layout(set = 1, binding = 0) uniform lowp texture2D m_Texture;
+layout(set = 1, binding = 1) uniform lowp sampler m_Sampler;
 
-layout(set = 3, binding = 0) uniform lowp texture2D m_Mask;
-layout(set = 3, binding = 1) uniform lowp sampler m_MaskSampler;
+layout(set = 2, binding = 0) uniform lowp texture2D m_Mask;
+layout(set = 2, binding = 1) uniform lowp sampler m_MaskSampler;
 
 layout(location = 0) out vec4 o_Colour;
 
