@@ -1,6 +1,7 @@
 // Copyright (c) ppy Pty Ltd <contact@ppy.sh>. Licensed under the MIT Licence.
 // See the LICENCE file in the repository root for full licence text.
 
+using System.Diagnostics.CodeAnalysis;
 using osu.Framework.Extensions.ObjectExtensions;
 using osu.Framework.Graphics.Rendering;
 using SharpGen.Runtime;
@@ -17,11 +18,14 @@ namespace osu.Framework.Graphics.Veldrid
         /// <summary>
         /// Tries to retrieve the native D3D11 device and immediate context for a Veldrid D3D11 renderer.
         /// </summary>
-        public static bool TryGetD3D11Device(IRenderer renderer, out ID3D11Device device, out ID3D11DeviceContext context, out BackendInfoD3D11 info)
+        public static bool TryGetD3D11Device(IRenderer renderer,
+                                             [NotNullWhen(true)] out ID3D11Device? device,
+                                             [NotNullWhen(true)] out ID3D11DeviceContext? context,
+                                             [NotNullWhen(true)] out BackendInfoD3D11? info)
         {
-            device = null!;
-            context = null!;
-            info = default;
+            device = null;
+            context = null;
+            info = null;
 
             if (renderer is not VeldridRenderer veldridRenderer)
                 return false;
