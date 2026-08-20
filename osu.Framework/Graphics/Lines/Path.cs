@@ -1,4 +1,4 @@
-﻿// Copyright (c) ppy Pty Ltd <contact@ppy.sh>. Licensed under the MIT Licence.
+// Copyright (c) ppy Pty Ltd <contact@ppy.sh>. Licensed under the MIT Licence.
 // See the LICENCE file in the repository root for full licence text.
 
 #nullable disable
@@ -315,7 +315,7 @@ namespace osu.Framework.Graphics.Lines
             return result;
         }
 
-        protected virtual BufferedDrawNodeSharedData CreateSharedData() => new BufferedDrawNodeSharedData(clipToRootNode: true);
+        protected virtual BufferedDrawNodeSharedData CreateSharedData() => new BufferedDrawNodeSharedData(TexturePixelFormat.R32Float, clipToRootNode: true);
 
         private BufferedDrawNodeSharedData sharedData;
 

@@ -49,7 +49,7 @@ namespace osu.Framework.Graphics.Veldrid.Textures
         private int textureSize;
 
         public D3D11ExternalNativeTexture(IRenderer renderer, int width, int height, TextureFilteringMode filteringMode)
-            : base(getVeldridRenderer(renderer), width, height, true, filteringMode.ToSamplerFilter())
+            : base(getVeldridRenderer(renderer), width, height, manualMipmaps: true, filteringMode: filteringMode.ToSamplerFilter())
         {
             samplerFilter = filteringMode.ToSamplerFilter();
 
