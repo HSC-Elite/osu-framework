@@ -315,7 +315,7 @@ namespace osu.Framework.Graphics.Lines
             return result;
         }
 
-        protected virtual BufferedDrawNodeSharedData CreateSharedData() => new BufferedDrawNodeSharedData(TexturePixelFormat.R32Float, clipToRootNode: true);
+        protected virtual BufferedDrawNodeSharedData CreateSharedData() => new BufferedDrawNodeSharedData(TexturePixelFormat.R16Float, clipToRootNode: true);
 
         private BufferedDrawNodeSharedData sharedData;
 
