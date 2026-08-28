@@ -136,6 +136,8 @@ namespace osu.Framework.Graphics.OpenGL
         protected internal override void SwapBuffers() => openGLSurface.SwapBuffers();
         protected internal override void WaitUntilIdle() => GL.Finish();
 
+        internal IntPtr GetProcAddress(string symbol) => openGLSurface.GetProcAddress(symbol);
+
         public bool BindVertexArray(int vaoId)
         {
             if (lastBoundVertexArray == vaoId)
