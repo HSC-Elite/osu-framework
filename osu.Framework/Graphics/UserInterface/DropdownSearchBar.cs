@@ -84,7 +84,7 @@ namespace osu.Framework.Graphics.UserInterface
         {
             base.Update();
 
-            updateMenuState();
+            //updateMenuState();
             updateTextBoxVisibility();
         }
 
