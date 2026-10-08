@@ -2,8 +2,10 @@
 // See the LICENCE file in the repository root for full licence text.
 
 using System;
+using System.Diagnostics;
 using osu.Framework.Graphics.OpenGL.Textures;
 using osu.Framework.Graphics.Rendering;
+using osu.Framework.Logging;
 using osu.Framework.Platform;
 using osuTK.Graphics.ES30;
 
@@ -11,6 +13,8 @@ namespace osu.Framework.Graphics.OpenGL
 {
     internal sealed class OpenGLAuxiliaryPresenter : IDisposable
     {
+        private const int make_current_warning_interval_seconds = 5;
+
         private const string vertexShaderSource = """
             #version 150 core
 
@@ -46,11 +50,13 @@ namespace osu.Framework.Graphics.OpenGL
         private readonly IGraphicsSurface auxiliaryGraphicsSurface;
         private readonly IOpenGLGraphicsSurface auxiliarySurface;
         private readonly ISharedOpenGLGraphicsSurface sharedAuxiliarySurface;
+        private readonly object synchronizationRoot;
 
         private int program;
         private int vertexArray;
         private int sourceTextureLocation;
         private int validatedSourceTexture;
+        private long lastMakeCurrentWarningTimestamp;
         private bool isDisposed;
 
         public OpenGLAuxiliaryPresenter(IOpenGLGraphicsSurface primarySurface, IGraphicsSurface auxiliaryGraphicsSurface)
@@ -62,124 +68,173 @@ namespace osu.Framework.Graphics.OpenGL
                                ?? throw new ArgumentException("The auxiliary surface must expose an OpenGL context.", nameof(auxiliaryGraphicsSurface));
             sharedAuxiliarySurface = auxiliaryGraphicsSurface as ISharedOpenGLGraphicsSurface
                                      ?? throw new ArgumentException("The auxiliary surface must support shared OpenGL contexts.", nameof(auxiliaryGraphicsSurface));
+            synchronizationRoot = sharedAuxiliarySurface.SynchronizationRoot;
 
-            sharedAuxiliarySurface.CreateSharedContext(primarySurface);
-
-            try
+            lock (synchronizationRoot)
             {
-                makeAuxiliaryCurrent();
-                vertexArray = GL.GenVertexArray();
-                GL.BindVertexArray(vertexArray);
-                program = createProgram();
-                sourceTextureLocation = GL.GetUniformLocation(program, "sourceTexture");
-            }
-            catch
-            {
-                if (auxiliarySurface.CurrentContext == auxiliarySurface.WindowContext)
-                    releaseResources();
+                sharedAuxiliarySurface.CreateSharedContext(primarySurface);
+                bool auxiliaryWasMadeCurrent = false;
 
                 try
                 {
-                    if (auxiliarySurface.CurrentContext == auxiliarySurface.WindowContext)
-                        auxiliarySurface.ClearCurrent();
+                    makeAuxiliaryCurrent();
+                    auxiliaryWasMadeCurrent = true;
+                    vertexArray = GL.GenVertexArray();
+                    GL.BindVertexArray(vertexArray);
+                    program = createProgram();
+                    sourceTextureLocation = GL.GetUniformLocation(program, "sourceTexture");
                 }
-                finally
+                catch
                 {
-                    sharedAuxiliarySurface.DestroySharedContext();
+                    if (auxiliarySurface.CurrentContext == auxiliarySurface.WindowContext)
+                        releaseResources();
+
+                    try
+                    {
+                        if (auxiliarySurface.CurrentContext == auxiliarySurface.WindowContext)
+                            auxiliarySurface.ClearCurrent();
+                    }
+                    finally
+                    {
+                        sharedAuxiliarySurface.DestroySharedContext();
+                    }
+
+                    throw;
                 }
 
-                throw;
-            }
-            finally
-            {
-                primarySurface.MakeCurrent(primarySurface.WindowContext);
+                finally
+                {
+                    if (auxiliaryWasMadeCurrent || !isPrimaryCurrent())
+                        restorePrimaryContext();
+                }
             }
         }
 
         public void Present(IFrameBuffer? source)
         {
-            if (isDisposed)
-                return;
-
-            int textureId = source?.Texture.NativeTexture is GLTexture glTexture ? glTexture.TextureId : 0;
-            if (source != null && textureId == 0)
-                throw new InvalidOperationException("The auxiliary OpenGL source texture is unavailable.");
-
-            System.Drawing.Size size = auxiliaryGraphicsSurface.GetDrawableSize();
-            if (size.Width <= 0 || size.Height <= 0)
-                return;
-
-            GL.Finish();
-
-            try
+            lock (synchronizationRoot)
             {
-                makeAuxiliaryCurrent();
+                if (isDisposed)
+                    return;
 
-                GL.BindFramebuffer(FramebufferTarget.Framebuffer, auxiliarySurface.BackbufferFramebuffer ?? 0);
-                GL.Viewport(0, 0, size.Width, size.Height);
-                GL.Disable(EnableCap.ScissorTest);
-                GL.Disable(EnableCap.DepthTest);
-                GL.Disable(EnableCap.StencilTest);
-                GL.Disable(EnableCap.Blend);
-                GL.ClearColor(0, 0, 0, 1);
-                GL.Clear(ClearBufferMask.ColorBufferBit);
+                int textureId = source?.Texture.NativeTexture is GLTexture glTexture ? glTexture.TextureId : 0;
+                if (source != null && textureId == 0)
+                    throw new InvalidOperationException("The auxiliary OpenGL source texture is unavailable.");
 
-                if (textureId != 0)
+                System.Drawing.Size size = auxiliaryGraphicsSurface.GetDrawableSize();
+                if (size.Width <= 0 || size.Height <= 0)
+                    return;
+
+                bool auxiliaryWasMadeCurrent = false;
+                bool primaryRestoreAttempted = false;
+                Exception? presentationException = null;
+
+                try
                 {
-                    if (validatedSourceTexture != textureId)
-                    {
-                        if (!GL.IsTexture(textureId))
-                            throw new InvalidOperationException("The auxiliary OpenGL context cannot access the source framebuffer texture.");
+                    GL.Finish();
 
-                        validatedSourceTexture = textureId;
+                    try
+                    {
+                        makeAuxiliaryCurrent();
+                        auxiliaryWasMadeCurrent = true;
+                    }
+                    catch (Exception makeCurrentException)
+                    {
+                        recoverPrimaryContextAfterMakeCurrentFailure(makeCurrentException, ref primaryRestoreAttempted);
+                        return;
                     }
 
-                    GL.UseProgram(program);
-                    GL.ActiveTexture(TextureUnit.Texture0);
-                    GL.BindTexture(TextureTarget.Texture2D, textureId);
-                    GL.Uniform1(sourceTextureLocation, 0);
-                    GL.BindVertexArray(vertexArray);
-                    GL.DrawArrays(PrimitiveType.Triangles, 0, 3);
-                }
+                    GL.BindFramebuffer(FramebufferTarget.Framebuffer, auxiliarySurface.BackbufferFramebuffer ?? 0);
+                    GL.Viewport(0, 0, size.Width, size.Height);
+                    GL.Disable(EnableCap.ScissorTest);
+                    GL.Disable(EnableCap.DepthTest);
+                    GL.Disable(EnableCap.StencilTest);
+                    GL.Disable(EnableCap.Blend);
+                    GL.ClearColor(0, 0, 0, 1);
+                    GL.Clear(ClearBufferMask.ColorBufferBit);
 
-                auxiliarySurface.SwapBuffers();
-            }
-            finally
-            {
-                primarySurface.MakeCurrent(primarySurface.WindowContext);
+                    if (textureId != 0)
+                    {
+                        if (validatedSourceTexture != textureId)
+                        {
+                            if (!GL.IsTexture(textureId))
+                                throw new InvalidOperationException("The auxiliary OpenGL context cannot access the source framebuffer texture.");
+
+                            validatedSourceTexture = textureId;
+                        }
+
+                        GL.UseProgram(program);
+                        GL.ActiveTexture(TextureUnit.Texture0);
+                        GL.BindTexture(TextureTarget.Texture2D, textureId);
+                        GL.Uniform1(sourceTextureLocation, 0);
+                        GL.BindVertexArray(vertexArray);
+                        GL.DrawArrays(PrimitiveType.Triangles, 0, 3);
+                    }
+
+                    auxiliarySurface.SwapBuffers();
+                }
+                catch (Exception ex)
+                {
+                    presentationException = ex;
+                    throw;
+                }
+                finally
+                {
+                    if (auxiliaryWasMadeCurrent ||
+                        (!primaryRestoreAttempted && primarySurface.WindowContext != IntPtr.Zero && !isPrimaryCurrent()))
+                    {
+                        try
+                        {
+                            restorePrimaryContext();
+                        }
+                        catch (Exception restoreException) when (presentationException != null)
+                        {
+                            throw new AggregateException("Auxiliary OpenGL presentation failed and the primary context could not be restored.", presentationException!, restoreException);
+                        }
+                    }
+                }
             }
         }
 
         public void Dispose()
         {
-            if (isDisposed)
-                return;
-
-            isDisposed = true;
-            primarySurface.MakeCurrent(primarySurface.WindowContext);
-            GL.Finish();
-
-            try
+            lock (synchronizationRoot)
             {
-                makeAuxiliaryCurrent();
-                releaseResources();
-            }
-            finally
-            {
+                if (isDisposed)
+                    return;
+
+                isDisposed = true;
+
+                if (!isPrimaryCurrent())
+                    restorePrimaryContext();
+
+                GL.Finish();
+                bool auxiliaryWasMadeCurrent = false;
+
                 try
                 {
-                    if (auxiliarySurface.CurrentContext == auxiliarySurface.WindowContext)
-                        auxiliarySurface.ClearCurrent();
+                    makeAuxiliaryCurrent();
+                    auxiliaryWasMadeCurrent = true;
+                    releaseResources();
                 }
                 finally
                 {
                     try
                     {
-                        sharedAuxiliarySurface.DestroySharedContext();
+                        if (auxiliarySurface.WindowContext != IntPtr.Zero && auxiliarySurface.CurrentContext == auxiliarySurface.WindowContext)
+                            auxiliarySurface.ClearCurrent();
                     }
                     finally
                     {
-                        primarySurface.MakeCurrent(primarySurface.WindowContext);
+                        try
+                        {
+                            sharedAuxiliarySurface.DestroySharedContext();
+                        }
+                        finally
+                        {
+                            if (auxiliaryWasMadeCurrent || !isPrimaryCurrent())
+                                restorePrimaryContext();
+                        }
                     }
                 }
             }
@@ -187,10 +242,80 @@ namespace osu.Framework.Graphics.OpenGL
 
         private void makeAuxiliaryCurrent()
         {
-            auxiliarySurface.MakeCurrent(auxiliarySurface.WindowContext);
+            IntPtr auxiliaryContext = auxiliarySurface.WindowContext;
 
-            if (auxiliarySurface.CurrentContext != auxiliarySurface.WindowContext)
+            if (auxiliaryContext == IntPtr.Zero)
+                throw new InvalidOperationException("The auxiliary OpenGL context is unavailable.");
+
+            auxiliarySurface.MakeCurrent(auxiliaryContext);
+
+            if (auxiliarySurface.CurrentContext != auxiliaryContext)
                 throw new InvalidOperationException("Failed to make the auxiliary OpenGL context current.");
+        }
+
+        private void recoverPrimaryContextAfterMakeCurrentFailure(Exception makeCurrentException, ref bool primaryRestoreAttempted)
+        {
+            IntPtr currentContext = primarySurface.CurrentContext;
+            IntPtr primaryContext = primarySurface.WindowContext;
+            bool primaryRestoreSucceeded = primaryContext != IntPtr.Zero && currentContext == primaryContext;
+            Exception? primaryRestoreException = null;
+
+            if (primaryContext == IntPtr.Zero)
+                throw new AggregateException("Auxiliary OpenGL MakeCurrent failed and the primary context is unavailable.", makeCurrentException);
+
+            if (!primaryRestoreSucceeded)
+            {
+                primaryRestoreAttempted = true;
+
+                try
+                {
+                    primarySurface.MakeCurrent(primaryContext);
+                    primaryRestoreSucceeded = primarySurface.CurrentContext == primaryContext;
+
+                    if (!primaryRestoreSucceeded)
+                        primaryRestoreException = new InvalidOperationException("The primary OpenGL context did not become current after the recovery attempt.");
+                }
+                catch (Exception ex)
+                {
+                    primaryRestoreException = ex;
+                }
+            }
+
+            if (!primaryRestoreSucceeded)
+            {
+                Exception restoreException = primaryRestoreException ?? new InvalidOperationException("The primary OpenGL context could not be restored.");
+                throw new AggregateException("Auxiliary OpenGL MakeCurrent failed and the primary context could not be restored.", makeCurrentException, restoreException);
+            }
+
+            logMakeCurrentWarning(currentContext, primaryContext, auxiliarySurface.WindowContext, primaryRestoreAttempted, primaryRestoreSucceeded, makeCurrentException);
+        }
+
+        private void logMakeCurrentWarning(IntPtr currentContext, IntPtr primaryContext, IntPtr auxiliaryContext, bool primaryRestoreAttempted, bool primaryRestoreSucceeded, Exception exception)
+        {
+            long now = Stopwatch.GetTimestamp();
+
+            if (lastMakeCurrentWarningTimestamp != 0 && now - lastMakeCurrentWarningTimestamp < Stopwatch.Frequency * make_current_warning_interval_seconds)
+                return;
+
+            lastMakeCurrentWarningTimestamp = now;
+
+            Logger.Log($"Auxiliary OpenGL MakeCurrent failed; skipping this presentation frame. Current context: 0x{currentContext.ToInt64():X}; expected primary context: 0x{primaryContext.ToInt64():X}; expected auxiliary context: 0x{auxiliaryContext.ToInt64():X}; primary restore attempted: {primaryRestoreAttempted}; primary restore succeeded: {primaryRestoreSucceeded}. Error: {exception.Message}", level: LogLevel.Important);
+        }
+
+        private bool isPrimaryCurrent()
+            => primarySurface.WindowContext != IntPtr.Zero && primarySurface.CurrentContext == primarySurface.WindowContext;
+
+        private void restorePrimaryContext()
+        {
+            IntPtr primaryContext = primarySurface.WindowContext;
+
+            if (primaryContext == IntPtr.Zero)
+                throw new InvalidOperationException("The primary OpenGL context is unavailable.");
+
+            primarySurface.MakeCurrent(primaryContext);
+
+            if (primarySurface.CurrentContext != primaryContext)
+                throw new InvalidOperationException("Failed to restore the primary OpenGL context.");
         }
 
         private void releaseResources()

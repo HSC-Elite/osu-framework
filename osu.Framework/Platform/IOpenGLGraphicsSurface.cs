@@ -64,6 +64,8 @@ namespace osu.Framework.Platform
 
     internal interface ISharedOpenGLGraphicsSurface
     {
+        object SynchronizationRoot { get; }
+
         void CreateSharedContext(IOpenGLGraphicsSurface sharedContextSurface);
 
         void DestroySharedContext();

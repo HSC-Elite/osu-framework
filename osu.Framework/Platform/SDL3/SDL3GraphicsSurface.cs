@@ -19,6 +19,7 @@ namespace osu.Framework.Platform.SDL3
     {
         private readonly SDL3Window window;
 
+        private readonly object? auxiliaryOpenGLSynchronizationRoot;
         private SDL_GLContextState* context;
         private IntPtr metalView;
 
@@ -30,6 +31,9 @@ namespace osu.Framework.Platform.SDL3
         {
             this.window = window;
             Type = surfaceType;
+
+            if (surfaceType == GraphicsSurfaceType.OpenGL && !window.IsPrimaryWindow)
+                auxiliaryOpenGLSynchronizationRoot = new object();
 
             switch (surfaceType)
             {
@@ -242,6 +246,11 @@ namespace osu.Framework.Platform.SDL3
 
         IntPtr IOpenGLGraphicsSurface.WindowContext => (IntPtr)context;
         IntPtr IOpenGLGraphicsSurface.CurrentContext => (IntPtr)SDL_GL_GetCurrentContext();
+
+        object ISharedOpenGLGraphicsSurface.SynchronizationRoot
+            => auxiliaryOpenGLSynchronizationRoot ?? throw new InvalidOperationException("Only an auxiliary OpenGL surface has a synchronization root.");
+
+        internal object? AuxiliaryOpenGLSynchronizationRoot => auxiliaryOpenGLSynchronizationRoot;
 
         void IOpenGLGraphicsSurface.SwapBuffers() => SDL_GL_SwapWindow(window.SDLWindowHandle);
         void IOpenGLGraphicsSurface.CreateContext() => SDL_GL_CreateContext(window.SDLWindowHandle);

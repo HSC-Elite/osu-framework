@@ -428,26 +428,40 @@ namespace osu.Framework.Platform.SDL3
 
             ScheduleCommand(() =>
             {
-                if (SDLWindowHandle == null)
+                object? synchronizationRoot = graphicsSurface.AuxiliaryOpenGLSynchronizationRoot;
+
+                if (synchronizationRoot == null)
+                {
+                    applyWindowSizeAndConstraints(size, fixedSize, updateSize, updateConstraints);
                     return;
-
-                if (updateConstraints)
-                {
-                    // Clear both old limits before applying the new pair so changing a fixed size cannot
-                    // temporarily leave the minimum larger than the maximum (or vice versa).
-                    SDL_SetWindowMaximumSize(SDLWindowHandle, 0, 0).LogErrorIfFailed();
-                    SDL_SetWindowMinimumSize(SDLWindowHandle, 0, 0).LogErrorIfFailed();
                 }
 
-                if (updateSize)
-                    SDL_SetWindowSize(SDLWindowHandle, size.Width, size.Height).LogErrorIfFailed();
-
-                if (updateConstraints)
-                {
-                    SDL_SetWindowMinimumSize(SDLWindowHandle, fixedSize.Width, fixedSize.Height).LogErrorIfFailed();
-                    SDL_SetWindowMaximumSize(SDLWindowHandle, fixedSize.Width, fixedSize.Height).LogErrorIfFailed();
-                }
+                lock (synchronizationRoot)
+                    applyWindowSizeAndConstraints(size, fixedSize, updateSize, updateConstraints);
             });
+        }
+
+        private void applyWindowSizeAndConstraints(System.Drawing.Size size, System.Drawing.Size fixedSize, bool updateSize, bool updateConstraints)
+        {
+            if (SDLWindowHandle == null)
+                return;
+
+            if (updateConstraints)
+            {
+                // Clear both old limits before applying the new pair so changing a fixed size cannot
+                // temporarily leave the minimum larger than the maximum (or vice versa).
+                SDL_SetWindowMaximumSize(SDLWindowHandle, 0, 0).LogErrorIfFailed();
+                SDL_SetWindowMinimumSize(SDLWindowHandle, 0, 0).LogErrorIfFailed();
+            }
+
+            if (updateSize)
+                SDL_SetWindowSize(SDLWindowHandle, size.Width, size.Height).LogErrorIfFailed();
+
+            if (updateConstraints)
+            {
+                SDL_SetWindowMinimumSize(SDLWindowHandle, fixedSize.Width, fixedSize.Height).LogErrorIfFailed();
+                SDL_SetWindowMaximumSize(SDLWindowHandle, fixedSize.Width, fixedSize.Height).LogErrorIfFailed();
+            }
         }
 
         internal void NotifyExited()
@@ -461,32 +475,49 @@ namespace osu.Framework.Platform.SDL3
 
         internal void DestroyNativeWindow()
         {
-            Exists = false;
-
-            if (SDLWindowHandle == null)
-                return;
-
-            try
-            {
-                runtime.UnregisterWindow(this);
-            }
-            finally
+            void destroyWindow()
             {
                 try
                 {
-                    graphicsSurface.Destroy();
+                    runtime.UnregisterWindow(this);
                 }
                 finally
                 {
                     try
                     {
-                        SDL_DestroyWindow(SDLWindowHandle);
+                        graphicsSurface.Destroy();
                     }
                     finally
                     {
-                        SDLWindowHandle = null;
+                        try
+                        {
+                            if (SDLWindowHandle != null)
+                                SDL_DestroyWindow(SDLWindowHandle);
+                        }
+                        finally
+                        {
+                            SDLWindowHandle = null;
+                        }
                     }
                 }
+            }
+
+            object? synchronizationRoot = graphicsSurface.AuxiliaryOpenGLSynchronizationRoot;
+
+            if (synchronizationRoot == null)
+            {
+                Exists = false;
+                if (SDLWindowHandle != null)
+                    destroyWindow();
+                return;
+            }
+
+            lock (synchronizationRoot)
+            {
+                Exists = false;
+
+                if (SDLWindowHandle != null)
+                    destroyWindow();
             }
         }
 
