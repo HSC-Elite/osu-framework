@@ -56,8 +56,7 @@ namespace osu.Framework
             if (parseBool(Environment.GetEnvironmentVariable("OSU_SDL3")) is bool userSDL3Override)
                 UseSDL3 = userSDL3Override;
             else
-                // Some desktop platforms have remaining issues, see https://github.com/ppy/osu-framework/issues/6540.
-                UseSDL3 = RuntimeInfo.OS != RuntimeInfo.Platform.macOS;
+                UseSDL3 = true;
         }
 
         private static bool? parseBool(string? value)

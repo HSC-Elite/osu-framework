@@ -20,6 +20,7 @@ namespace osu.Framework.Platform.SDL3
         private readonly SDL3Window window;
 
         private SDL_GLContextState* context;
+        private IntPtr metalView;
 
         public IntPtr WindowHandle => window.WindowHandle;
 
@@ -58,6 +59,14 @@ namespace osu.Framework.Platform.SDL3
         {
             if (Type == GraphicsSurfaceType.OpenGL && window.IsPrimaryWindow)
                 initialiseOpenGL(loadBindings: true);
+
+            if (Type == GraphicsSurfaceType.Metal)
+            {
+                metalView = SDL_Metal_CreateView(window.SDLWindowHandle);
+
+                if (metalView == IntPtr.Zero)
+                    throw new InvalidOperationException($"Failed to create an SDL3 Metal view ({SDL_GetError()})");
+            }
         }
 
         public Size GetDrawableSize()
@@ -236,7 +245,7 @@ namespace osu.Framework.Platform.SDL3
 
         #region Metal-specific implementation
 
-        IntPtr IMetalGraphicsSurface.CreateMetalView() => SDL_Metal_CreateView(window.SDLWindowHandle);
+        IntPtr IMetalGraphicsSurface.CreateMetalView() => metalView;
 
         #endregion
 

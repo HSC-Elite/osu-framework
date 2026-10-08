@@ -158,7 +158,9 @@ namespace osu.Framework.Graphics.Veldrid
         }
 
         bool IAuxiliaryPresentationRenderer.SupportsAuxiliarySurface(IGraphicsSurface surface)
-            => surface.Type == GraphicsSurfaceType.Direct3D11;
+            => surface.Type == SurfaceType &&
+               (surface.Type is GraphicsSurfaceType.Direct3D11 or GraphicsSurfaceType.Metal) &&
+               (surface.Type != GraphicsSurfaceType.Metal || surface is IMetalGraphicsSurface);
 
         void IAuxiliaryPresentationRenderer.RegisterAuxiliaryWindow(IAuxiliaryPresentationWindow window)
         {

@@ -7,7 +7,6 @@ using System.Collections.Generic;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using osu.Framework.Allocation;
-using osu.Framework.Extensions.EnumExtensions;
 using osu.Framework.Logging;
 using SDL;
 using static SDL.SDL3;

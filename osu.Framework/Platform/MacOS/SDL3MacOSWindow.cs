@@ -4,6 +4,7 @@
 #nullable disable
 
 using System;
+using System.Collections.Generic;
 using osu.Framework.Platform.Apple.Native;
 using osu.Framework.Platform.SDL3;
 using osuTK;
@@ -16,6 +17,10 @@ namespace osu.Framework.Platform.MacOS
     /// </summary>
     internal class SDL3MacOSWindow : SDL3DesktopWindow
     {
+        private static readonly object scrollWheelLock = new object();
+        private static readonly Dictionary<IntPtr, SDL3MacOSWindow> windowsByNativeHandle = new Dictionary<IntPtr, SDL3MacOSWindow>();
+
+        private static readonly IntPtr sel_window = Selector.Get("window");
         private static readonly IntPtr sel_hasprecisescrollingdeltas = Selector.Get("hasPreciseScrollingDeltas");
         private static readonly IntPtr sel_scrollingdeltax = Selector.Get("scrollingDeltaX");
         private static readonly IntPtr sel_scrollingdeltay = Selector.Get("scrollingDeltaY");
@@ -23,39 +28,69 @@ namespace osu.Framework.Platform.MacOS
 
         private delegate void ScrollWheelDelegate(IntPtr handle, IntPtr selector, IntPtr theEvent); // v@:@
 
-        private IntPtr originalScrollWheel;
-        private ScrollWheelDelegate scrollWheelHandler;
+        private static readonly ScrollWheelDelegate scrollWheelHandler = scrollWheel;
+
+        private static IntPtr originalScrollWheel;
+        private static bool scrollWheelSwizzled;
+
+        private IntPtr cocoaWindowHandle;
 
         public SDL3MacOSWindow(GraphicsSurfaceType surfaceType, string appName)
             : base(surfaceType, appName)
         {
         }
 
+        private SDL3MacOSWindow(GraphicsSurfaceType surfaceType, string appName, SDL3WindowRuntime runtime)
+            : base(surfaceType, appName, runtime)
+        {
+        }
+
+        protected override SDL3Window CreateSiblingWindowInstance()
+            => new SDL3MacOSWindow(SurfaceType, AppName, Runtime);
+
         public override void Create()
         {
             base.Create();
 
-            // replace [SDLView scrollWheel:(NSEvent *)] with our own version
-            IntPtr viewClass = Class.Get("SDL3View");
-            scrollWheelHandler = scrollWheel;
-            originalScrollWheel = Class.SwizzleMethod(viewClass, "scrollWheel:", "v@:@", scrollWheelHandler);
+            lock (scrollWheelLock)
+            {
+                if (!scrollWheelSwizzled)
+                {
+                    IntPtr viewClass = Class.Get("SDL3View");
+                    originalScrollWheel = Class.SwizzleMethod(viewClass, "scrollWheel:", "v@:@", scrollWheelHandler);
+                    scrollWheelSwizzled = true;
+                }
+
+                cocoaWindowHandle = WindowHandle;
+
+                if (cocoaWindowHandle != IntPtr.Zero)
+                    windowsByNativeHandle[cocoaWindowHandle] = this;
+            }
+
+            Exited += onWindowExited;
         }
 
-        /// <summary>
-        /// Swizzled replacement of [SDLView scrollWheel:(NSEvent *)] that checks for precise scrolling deltas.
-        /// </summary>
-        private void scrollWheel(IntPtr receiver, IntPtr selector, IntPtr theEvent)
+        private void onWindowExited()
+        {
+            Exited -= onWindowExited;
+
+            lock (scrollWheelLock)
+            {
+                if (windowsByNativeHandle.TryGetValue(cocoaWindowHandle, out SDL3MacOSWindow registeredWindow) && registeredWindow == this)
+                    windowsByNativeHandle.Remove(cocoaWindowHandle);
+
+                cocoaWindowHandle = IntPtr.Zero;
+            }
+        }
+
+        private static void scrollWheel(IntPtr receiver, IntPtr selector, IntPtr theEvent)
         {
             bool hasPrecise = Interop.SendBool(theEvent, sel_respondstoselector_, sel_hasprecisescrollingdeltas) &&
                               Interop.SendBool(theEvent, sel_hasprecisescrollingdeltas);
 
             if (!hasPrecise)
             {
-                // calls the unswizzled [SDLView scrollWheel:(NSEvent *)] method if this is a regular scroll wheel event
-                // the receiver may sometimes not be SDLView, ensure it has a scroll wheel selector implemented before attempting to call.
-                if (Interop.SendBool(receiver, sel_respondstoselector_, originalScrollWheel))
-                    Interop.SendVoid(receiver, originalScrollWheel, theEvent);
-
+                invokeOriginalScrollWheel(receiver, theEvent);
                 return;
             }
 
@@ -66,7 +101,26 @@ namespace osu.Framework.Platform.MacOS
             float scrollingDeltaX = Interop.SendFloat(theEvent, sel_scrollingdeltax);
             float scrollingDeltaY = Interop.SendFloat(theEvent, sel_scrollingdeltay);
 
-            ScheduleEvent(() => TriggerMouseWheel(new Vector2(scrollingDeltaX * scale_factor, scrollingDeltaY * scale_factor), true));
+            IntPtr cocoaWindowHandle = Interop.SendIntPtr(receiver, sel_window);
+            SDL3MacOSWindow window;
+            bool hasWindow;
+
+            lock (scrollWheelLock)
+                hasWindow = windowsByNativeHandle.TryGetValue(cocoaWindowHandle, out window);
+
+            if (!hasWindow)
+            {
+                invokeOriginalScrollWheel(receiver, theEvent);
+                return;
+            }
+
+            window.ScheduleEvent(() => window.TriggerMouseWheel(new Vector2(scrollingDeltaX * scale_factor, scrollingDeltaY * scale_factor), true));
+        }
+
+        private static void invokeOriginalScrollWheel(IntPtr receiver, IntPtr theEvent)
+        {
+            if (originalScrollWheel != IntPtr.Zero && Interop.SendBool(receiver, sel_respondstoselector_, originalScrollWheel))
+                Interop.SendVoid(receiver, originalScrollWheel, theEvent);
         }
     }
 }
