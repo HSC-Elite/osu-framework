@@ -8,10 +8,26 @@ namespace osu.Framework.Platform.Linux
 {
     internal class SDL3LinuxWindow : SDL3DesktopWindow
     {
+        private readonly bool bypassCompositor;
+
         public SDL3LinuxWindow(GraphicsSurfaceType surfaceType, string appName, bool bypassCompositor)
             : base(surfaceType, appName)
         {
-            SDL_SetHint(SDL_HINT_VIDEO_X11_NET_WM_BYPASS_COMPOSITOR, bypassCompositor ? "1"u8 : "0"u8).LogErrorIfFailed();
+            this.bypassCompositor = bypassCompositor;
+            applyBypassCompositorHint();
         }
+
+        private SDL3LinuxWindow(GraphicsSurfaceType surfaceType, string appName, bool bypassCompositor, SDL3WindowRuntime runtime)
+            : base(surfaceType, appName, runtime)
+        {
+            this.bypassCompositor = bypassCompositor;
+            applyBypassCompositorHint();
+        }
+
+        protected override SDL3Window CreateSiblingWindowInstance()
+            => new SDL3LinuxWindow(SurfaceType, AppName, bypassCompositor, Runtime);
+
+        private void applyBypassCompositorHint()
+            => SDL_SetHint(SDL_HINT_VIDEO_X11_NET_WM_BYPASS_COMPOSITOR, bypassCompositor ? "1"u8 : "0"u8).LogErrorIfFailed();
     }
 }

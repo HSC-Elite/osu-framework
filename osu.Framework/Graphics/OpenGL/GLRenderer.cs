@@ -18,6 +18,7 @@ using osu.Framework.Graphics.Textures;
 using osu.Framework.Logging;
 using osu.Framework.Platform;
 using osu.Framework.Statistics;
+using osu.Framework.Threading;
 using osuTK;
 using osuTK.Graphics.ES30;
 using osuTK.Graphics;
@@ -30,9 +31,17 @@ using GL4 = osuTK.Graphics.OpenGL;
 
 namespace osu.Framework.Graphics.OpenGL
 {
-    internal class GLRenderer : Renderer
+    internal class GLRenderer : Renderer, IAuxiliaryPresentationRenderer, IDisposable
     {
         private IOpenGLGraphicsSurface openGLSurface = null!;
+
+        private readonly object auxiliaryWindowLock = new object();
+        private IAuxiliaryPresentationWindow? auxiliaryWindow;
+        private OpenGLAuxiliaryPresenter? auxiliaryPresenter;
+        private IFrameBuffer? auxiliaryPresentationSource;
+        private Action? releaseAuxiliaryWindow;
+        private bool auxiliaryWindowDisposing;
+        private bool rendererDisposed;
 
         protected internal override bool VerticalSync
         {
@@ -127,6 +136,12 @@ namespace osu.Framework.Graphics.OpenGL
             base.BeginFrame(windowSize);
         }
 
+        protected internal override void FinishFrame()
+        {
+            base.FinishFrame();
+            drawAuxiliaryWindowFrame();
+        }
+
         protected internal override void WaitUntilNextFrameReady()
         {
         }
@@ -135,6 +150,130 @@ namespace osu.Framework.Graphics.OpenGL
         protected internal override void ClearCurrent() => openGLSurface.ClearCurrent();
         protected internal override void SwapBuffers() => openGLSurface.SwapBuffers();
         protected internal override void WaitUntilIdle() => GL.Finish();
+
+        bool IAuxiliaryPresentationRenderer.SupportsAuxiliarySurface(IGraphicsSurface surface)
+            => surface.Type == GraphicsSurfaceType.OpenGL &&
+               surface is IOpenGLGraphicsSurface &&
+               surface is ISharedOpenGLGraphicsSurface;
+
+        void IAuxiliaryPresentationRenderer.RegisterAuxiliaryWindow(IAuxiliaryPresentationWindow window)
+        {
+            if (!((IAuxiliaryPresentationRenderer)this).SupportsAuxiliarySurface(window.GraphicsSurface))
+                throw new NotSupportedException($"Auxiliary presentation does not support the {window.GraphicsSurface.Type} surface.");
+
+            lock (auxiliaryWindowLock)
+            {
+                if (rendererDisposed || auxiliaryWindow != null || auxiliaryWindowDisposing)
+                    throw new InvalidOperationException("Only one external window may be active at a time.");
+
+                auxiliaryWindow = window;
+            }
+
+            ScheduleExpensiveOperation(new ScheduledDelegate(() =>
+            {
+                lock (auxiliaryWindowLock)
+                {
+                    if (rendererDisposed || auxiliaryWindowDisposing || auxiliaryWindow != window || window.IsClosing)
+                        return;
+
+                    auxiliaryPresenter = new OpenGLAuxiliaryPresenter(openGLSurface, window.GraphicsSurface);
+                }
+            }));
+        }
+
+        void IAuxiliaryPresentationRenderer.SetAuxiliaryPresentationSource(IFrameBuffer frameBuffer)
+        {
+            lock (auxiliaryWindowLock)
+            {
+                if (!rendererDisposed && auxiliaryWindow?.IsClosing == false)
+                    auxiliaryPresentationSource = frameBuffer;
+            }
+        }
+
+        void IAuxiliaryPresentationRenderer.UnregisterAuxiliaryWindow(IAuxiliaryPresentationWindow window, Action releaseWindow)
+        {
+            bool releaseImmediately;
+
+            lock (auxiliaryWindowLock)
+            {
+                releaseImmediately = auxiliaryWindow != window || rendererDisposed;
+
+                if (!releaseImmediately && auxiliaryWindowDisposing)
+                    return;
+
+                if (!releaseImmediately)
+                {
+                    auxiliaryWindowDisposing = true;
+                    auxiliaryPresentationSource = null;
+                    releaseAuxiliaryWindow = releaseWindow;
+                }
+            }
+
+            if (releaseImmediately)
+            {
+                releaseWindow();
+                return;
+            }
+
+            ScheduleExpensiveOperation(new ScheduledDelegate(() => disposeAuxiliaryWindow(window)));
+        }
+
+        public void Dispose()
+        {
+            Action? releaseWindow;
+
+            lock (auxiliaryWindowLock)
+            {
+                if (rendererDisposed)
+                    return;
+
+                rendererDisposed = true;
+                auxiliaryWindowDisposing = true;
+                auxiliaryPresentationSource = null;
+
+                auxiliaryPresenter?.Dispose();
+                auxiliaryPresenter = null;
+                auxiliaryWindow = null;
+                auxiliaryWindowDisposing = false;
+                releaseWindow = releaseAuxiliaryWindow;
+                releaseAuxiliaryWindow = null;
+            }
+
+            releaseWindow?.Invoke();
+            ClearCurrent();
+        }
+
+        private void drawAuxiliaryWindowFrame()
+        {
+            lock (auxiliaryWindowLock)
+            {
+                if (auxiliaryWindow == null || auxiliaryPresenter == null || auxiliaryWindow.IsClosing)
+                    return;
+
+                auxiliaryPresenter.Present(auxiliaryPresentationSource);
+            }
+        }
+
+        private void disposeAuxiliaryWindow(IAuxiliaryPresentationWindow window)
+        {
+            Action? releaseWindow = null;
+
+            lock (auxiliaryWindowLock)
+            {
+                if (auxiliaryWindow != window)
+                    return;
+
+                auxiliaryPresenter?.Dispose();
+                auxiliaryPresenter = null;
+                auxiliaryPresentationSource = null;
+                auxiliaryWindow = null;
+                auxiliaryWindowDisposing = false;
+                releaseWindow = releaseAuxiliaryWindow;
+                releaseAuxiliaryWindow = null;
+            }
+
+            releaseWindow?.Invoke();
+        }
 
         internal IntPtr GetProcAddress(string symbol) => openGLSurface.GetProcAddress(symbol);
 

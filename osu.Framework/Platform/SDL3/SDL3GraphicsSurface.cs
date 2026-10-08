@@ -15,7 +15,7 @@ using static SDL.SDL3;
 
 namespace osu.Framework.Platform.SDL3
 {
-    internal unsafe class SDL3GraphicsSurface : IGraphicsSurface, IOpenGLGraphicsSurface, IMetalGraphicsSurface, ILinuxGraphicsSurface, IAndroidGraphicsSurface
+    internal unsafe class SDL3GraphicsSurface : IGraphicsSurface, IOpenGLGraphicsSurface, ISharedOpenGLGraphicsSurface, IMetalGraphicsSurface, ILinuxGraphicsSurface, IAndroidGraphicsSurface
     {
         private readonly SDL3Window window;
 
@@ -56,8 +56,8 @@ namespace osu.Framework.Platform.SDL3
 
         public void Initialise()
         {
-            if (Type == GraphicsSurfaceType.OpenGL)
-                initialiseOpenGL();
+            if (Type == GraphicsSurfaceType.OpenGL && window.IsPrimaryWindow)
+                initialiseOpenGL(loadBindings: true);
         }
 
         public Size GetDrawableSize()
@@ -69,7 +69,7 @@ namespace osu.Framework.Platform.SDL3
 
         #region OpenGL-specific implementation
 
-        private void initialiseOpenGL()
+        private void initialiseOpenGL(bool loadBindings)
         {
             if (RuntimeInfo.IsMobile)
             {
@@ -95,7 +95,55 @@ namespace osu.Framework.Platform.SDL3
 
             SDL_GL_MakeCurrent(window.SDLWindowHandle, context).ThrowIfFailed();
 
-            loadBindings();
+            if (loadBindings)
+                this.loadBindings();
+        }
+
+        void ISharedOpenGLGraphicsSurface.CreateSharedContext(IOpenGLGraphicsSurface sharedContextSurface)
+        {
+            if (Type != GraphicsSurfaceType.OpenGL)
+                throw new InvalidOperationException("Only OpenGL surfaces can create shared OpenGL contexts.");
+
+            if (context != null)
+                throw new InvalidOperationException("This OpenGL surface already has a context.");
+
+            if (sharedContextSurface.CurrentContext == IntPtr.Zero || sharedContextSurface.CurrentContext != sharedContextSurface.WindowContext)
+                throw new InvalidOperationException("The primary OpenGL context must be current before creating a shared context.");
+
+            int previousSharingAttribute = 0;
+            SDL_GL_GetAttribute(SDL_GLAttr.SDL_GL_SHARE_WITH_CURRENT_CONTEXT, &previousSharingAttribute).ThrowIfFailed();
+
+            try
+            {
+                SDL_GL_SetAttribute(SDL_GLAttr.SDL_GL_SHARE_WITH_CURRENT_CONTEXT, 1).ThrowIfFailed();
+                initialiseOpenGL(loadBindings: false);
+            }
+            catch
+            {
+                if (context != null)
+                {
+                    SDL_GL_MakeCurrent(window.SDLWindowHandle, null).LogErrorIfFailed();
+                    SDL_GL_DestroyContext(context).LogErrorIfFailed();
+                    context = null;
+                }
+
+                throw;
+            }
+            finally
+            {
+                SDL_GL_SetAttribute(SDL_GLAttr.SDL_GL_SHARE_WITH_CURRENT_CONTEXT, previousSharingAttribute).LogErrorIfFailed();
+                sharedContextSurface.MakeCurrent(sharedContextSurface.WindowContext);
+            }
+        }
+
+        void ISharedOpenGLGraphicsSurface.DestroySharedContext()
+        {
+            if (context == null)
+                return;
+
+            SDL_GL_DestroyContext(context).ThrowIfFailed();
+            context = null;
+            verticalSync = null;
         }
 
         private void loadBindings()
@@ -180,8 +228,8 @@ namespace osu.Framework.Platform.SDL3
         void IOpenGLGraphicsSurface.SwapBuffers() => SDL_GL_SwapWindow(window.SDLWindowHandle);
         void IOpenGLGraphicsSurface.CreateContext() => SDL_GL_CreateContext(window.SDLWindowHandle);
         void IOpenGLGraphicsSurface.DeleteContext(IntPtr context) => SDL_GL_DestroyContext((SDL_GLContextState*)context);
-        void IOpenGLGraphicsSurface.MakeCurrent(IntPtr context) => SDL_GL_MakeCurrent(window.SDLWindowHandle, (SDL_GLContextState*)context);
-        void IOpenGLGraphicsSurface.ClearCurrent() => SDL_GL_MakeCurrent(window.SDLWindowHandle, null);
+        void IOpenGLGraphicsSurface.MakeCurrent(IntPtr context) => SDL_GL_MakeCurrent(window.SDLWindowHandle, (SDL_GLContextState*)context).ThrowIfFailed();
+        void IOpenGLGraphicsSurface.ClearCurrent() => SDL_GL_MakeCurrent(window.SDLWindowHandle, null).ThrowIfFailed();
         IntPtr IOpenGLGraphicsSurface.GetProcAddress(string symbol) => SDL_GL_GetProcAddress(symbol);
 
         #endregion

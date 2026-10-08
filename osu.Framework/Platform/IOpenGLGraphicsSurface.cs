@@ -61,4 +61,11 @@ namespace osu.Framework.Platform
         /// <param name="symbol">The symbolic name of the OpenGL function.</param>
         IntPtr GetProcAddress(string symbol);
     }
+
+    internal interface ISharedOpenGLGraphicsSurface
+    {
+        void CreateSharedContext(IOpenGLGraphicsSurface sharedContextSurface);
+
+        void DestroySharedContext();
+    }
 }

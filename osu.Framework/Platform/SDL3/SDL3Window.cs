@@ -197,7 +197,7 @@ namespace osu.Framework.Platform.SDL3
 
         protected SDL3WindowRuntime Runtime => runtime;
 
-        protected bool IsPrimaryWindow => isPrimaryWindow;
+        internal bool IsPrimaryWindow => isPrimaryWindow;
 
         internal void CreateSiblingWindow(string windowTitle, System.Drawing.Size clientSize, Action<SDL3Window> onCreated)
         {
