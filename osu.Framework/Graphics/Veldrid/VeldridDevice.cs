@@ -124,56 +124,8 @@ namespace osu.Framework.Graphics.Veldrid
 
             int maxTextureSize;
 
-            switch (RuntimeInfo.OS)
-            {
-                case RuntimeInfo.Platform.Windows:
-                {
-                    swapchain.Source = SwapchainSource.CreateWin32(this.graphicsSurface.WindowHandle, IntPtr.Zero);
-                    break;
-                }
-
-                case RuntimeInfo.Platform.macOS:
-                {
-                    // OpenGL doesn't use a swapchain, so it's only needed on Metal.
-                    // Creating a Metal surface in general would otherwise destroy the GL context.
-                    if (this.graphicsSurface.Type == GraphicsSurfaceType.Metal)
-                    {
-                        var metalGraphics = (IMetalGraphicsSurface)this.graphicsSurface;
-                        swapchain.Source = SwapchainSource.CreateNSView(metalGraphics.CreateMetalView());
-                    }
-
-                    break;
-                }
-
-                case RuntimeInfo.Platform.iOS:
-                {
-                    // OpenGL doesn't use a swapchain, so it's only needed on Metal.
-                    // Creating a Metal surface in general would otherwise destroy the GL context.
-                    if (this.graphicsSurface.Type == GraphicsSurfaceType.Metal)
-                    {
-                        var metalGraphics = (IMetalGraphicsSurface)this.graphicsSurface;
-                        swapchain.Source = SwapchainSource.CreateUIView(metalGraphics.CreateMetalView());
-                    }
-
-                    break;
-                }
-
-                case RuntimeInfo.Platform.Linux:
-                {
-                    var linuxGraphics = (ILinuxGraphicsSurface)this.graphicsSurface;
-                    swapchain.Source = linuxGraphics.IsWayland
-                        ? SwapchainSource.CreateWayland(linuxGraphics.DisplayHandle, this.graphicsSurface.WindowHandle)
-                        : SwapchainSource.CreateXlib(linuxGraphics.DisplayHandle, this.graphicsSurface.WindowHandle);
-                    break;
-                }
-
-                case RuntimeInfo.Platform.Android:
-                {
-                    var androidGraphics = (IAndroidGraphicsSurface)this.graphicsSurface;
-                    swapchain.Source = SwapchainSource.CreateAndroidSurface(androidGraphics.SurfaceHandle, androidGraphics.JniEnvHandle);
-                    break;
-                }
-            }
+            if (CreateSwapchainSource(this.graphicsSurface) is { } source)
+                swapchain.Source = source;
 
             switch (this.graphicsSurface.Type)
             {
@@ -217,6 +169,43 @@ namespace osu.Framework.Graphics.Veldrid
             Logger.Log($"{nameof(UseStructuredBuffers)}: {UseStructuredBuffers}");
 
             MaxTextureSize = maxTextureSize;
+        }
+
+        internal static SwapchainSource? CreateSwapchainSource(IGraphicsSurface graphicsSurface)
+        {
+            switch (RuntimeInfo.OS)
+            {
+                case RuntimeInfo.Platform.Windows:
+                    return SwapchainSource.CreateWin32(graphicsSurface.WindowHandle, IntPtr.Zero);
+
+                case RuntimeInfo.Platform.macOS:
+                    if (graphicsSurface.Type == GraphicsSurfaceType.Metal)
+                        return SwapchainSource.CreateNSView(((IMetalGraphicsSurface)graphicsSurface).CreateMetalView());
+
+                    break;
+
+                case RuntimeInfo.Platform.iOS:
+                    if (graphicsSurface.Type == GraphicsSurfaceType.Metal)
+                        return SwapchainSource.CreateUIView(((IMetalGraphicsSurface)graphicsSurface).CreateMetalView());
+
+                    break;
+
+                case RuntimeInfo.Platform.Linux:
+                {
+                    var linuxGraphics = (ILinuxGraphicsSurface)graphicsSurface;
+                    return linuxGraphics.IsWayland
+                        ? SwapchainSource.CreateWayland(linuxGraphics.DisplayHandle, graphicsSurface.WindowHandle)
+                        : SwapchainSource.CreateXlib(linuxGraphics.DisplayHandle, graphicsSurface.WindowHandle);
+                }
+
+                case RuntimeInfo.Platform.Android:
+                {
+                    var androidGraphics = (IAndroidGraphicsSurface)graphicsSurface;
+                    return SwapchainSource.CreateAndroidSurface(androidGraphics.SurfaceHandle, androidGraphics.JniEnvHandle);
+                }
+            }
+
+            return default;
         }
 
         /// <summary>

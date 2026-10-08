@@ -3,7 +3,6 @@
 
 using System;
 using System.IO;
-using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
 using osu.Framework.Allocation;
@@ -31,6 +30,10 @@ namespace osu.Framework.Platform.SDL3
         internal SDL_Window* SDLWindowHandle { get; private set; } = null;
 
         private readonly SDL3GraphicsSurface graphicsSurface;
+        private readonly SDL3WindowRuntime runtime;
+        private readonly bool isPrimaryWindow;
+        private readonly string appName;
+        private bool hasNotifiedExited;
         IGraphicsSurface IWindow.GraphicsSurface => graphicsSurface;
 
         /// <summary>
@@ -156,32 +159,25 @@ namespace osu.Framework.Platform.SDL3
 
         public bool KeyboardAttached => SDL_HasKeyboard();
 
-        /// <summary>
-        /// Represents a handle to this <see cref="SDL3Window"/> instance, used for unmanaged callbacks.
-        /// </summary>
-        protected ObjectHandle<SDL3Window> ObjectHandle { get; private set; }
-
         protected SDL3Window(GraphicsSurfaceType surfaceType, string appName)
+            : this(surfaceType, appName, new SDL3WindowRuntime(appName), true)
         {
-            ObjectHandle = new ObjectHandle<SDL3Window>(this, GCHandleType.Normal);
+        }
 
-            SDL_SetHint(SDL_HINT_APP_NAME, appName).LogErrorIfFailed();
+        protected SDL3Window(GraphicsSurfaceType surfaceType, string appName, SDL3WindowRuntime runtime)
+            : this(surfaceType, appName, runtime, false)
+        {
+        }
 
-            if (!SDL_Init(SDL_InitFlags.SDL_INIT_VIDEO | SDL_InitFlags.SDL_INIT_GAMEPAD))
-            {
-                throw new InvalidOperationException($"Failed to initialise SDL: {SDL_GetError()}");
-            }
+        private SDL3Window(GraphicsSurfaceType surfaceType, string appName, SDL3WindowRuntime runtime, bool isPrimaryWindow)
+        {
+            this.runtime = runtime;
+            this.isPrimaryWindow = isPrimaryWindow;
+            this.appName = appName;
+            IsWayland = runtime.IsWayland;
 
-            int version = SDL_GetVersion();
-            Logger.Log($@"SDL3 Initialized
-                          SDL3 Version: {SDL_VERSIONNUM_MAJOR(version)}.{SDL_VERSIONNUM_MINOR(version)}.{SDL_VERSIONNUM_MICRO(version)}
-                          SDL3 Revision: {SDL_GetRevision()}
-                          SDL3 Video driver: {SDL_GetCurrentVideoDriver()}");
-
-            IsWayland = SDL_GetCurrentVideoDriver() == "wayland";
-
-            SDL_SetLogOutputFunction(&logOutput, IntPtr.Zero);
-            SDL_SetEventFilter(&eventFilter, ObjectHandle.Handle);
+            if (isPrimaryWindow)
+                runtime.SetPrimaryWindow(this);
 
             graphicsSurface = new SDL3GraphicsSurface(this, surfaceType);
 
@@ -191,15 +187,45 @@ namespace osu.Framework.Platform.SDL3
                 updateCursorConfinement();
             };
 
-            populateJoysticks();
+            if (isPrimaryWindow)
+                populateJoysticks();
         }
 
-        [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvCdecl) })]
-        private static void logOutput(IntPtr _, int category, SDL_LogPriority priority, byte* messagePtr)
+        protected string AppName => appName;
+
+        protected GraphicsSurfaceType SurfaceType => graphicsSurface.Type;
+
+        protected SDL3WindowRuntime Runtime => runtime;
+
+        protected bool IsPrimaryWindow => isPrimaryWindow;
+
+        internal void CreateSiblingWindow(string windowTitle, System.Drawing.Size clientSize, Action<SDL3Window> onCreated)
         {
-            SDL_LogCategory categoryEnum = (SDL_LogCategory)category;
-            string? message = PtrToStringUTF8(messagePtr);
-            Logger.Log($@"SDL {categoryEnum.ReadableName()} log [{priority.ReadableName()}]: {message}");
+            if (!isPrimaryWindow)
+                throw new InvalidOperationException("A sibling SDL3 window must be created from the primary window.");
+
+            ScheduleCommand(() =>
+            {
+                SDL3Window siblingWindow = CreateSiblingWindowInstance();
+                siblingWindow.SetupSiblingWindow(windowTitle, clientSize);
+                siblingWindow.Create();
+                onCreated(siblingWindow);
+            });
+        }
+
+        protected virtual SDL3Window CreateSiblingWindowInstance()
+            => throw new NotSupportedException($"{GetType().Name} does not support sibling windows.");
+
+        protected void SetupSiblingWindow(string windowTitle, System.Drawing.Size clientSize)
+        {
+            title = windowTitle;
+            Size = clientSize;
+
+            fetchDisplays();
+            currentDisplay = PrimaryDisplay;
+            CurrentDisplayBindable.Default = currentDisplay;
+            CurrentDisplayBindable.Value = currentDisplay;
+            WindowMode.Value = Configuration.WindowMode.Windowed;
         }
 
         public void SetupWindow(FrameworkConfigManager config)
@@ -236,6 +262,7 @@ namespace osu.Framework.Platform.SDL3
             // so we deactivate it on startup.
             SDL_StopTextInput(SDLWindowHandle).LogErrorIfFailed();
 
+            runtime.RegisterWindow(this);
             graphicsSurface.Initialise();
 
             initialiseWindowingAfterCreation();
@@ -247,7 +274,8 @@ namespace osu.Framework.Platform.SDL3
         /// </summary>
         public virtual void Run()
         {
-            SDL_AddEventWatch(&eventWatch, ObjectHandle.Handle).LogErrorIfFailed();
+            if (!isPrimaryWindow)
+                throw new InvalidOperationException("Only the primary SDL3 window can run the event loop.");
 
             RunMainLoop();
         }
@@ -267,15 +295,15 @@ namespace osu.Framework.Platform.SDL3
             while (Exists)
                 RunFrame();
 
-            Exited?.Invoke();
-            Close();
-            SDL_Quit();
+            NotifyExited();
         }
 
         /// <summary>
         /// Run a single frame.
         /// </summary>
-        protected void RunFrame()
+        protected void RunFrame() => runtime.RunFrame();
+
+        internal void RunFrameBeforeEventPump()
         {
             commandScheduler.Update();
 
@@ -284,8 +312,12 @@ namespace osu.Framework.Platform.SDL3
 
             if (pendingWindowState != null)
                 updateAndFetchWindowSpecifics();
+        }
 
-            pollSDLEvents();
+        internal void RunFrameAfterEventPump()
+        {
+            if (!Exists)
+                return;
 
             if (!cursorInWindow.Value)
                 pollMouse();
@@ -293,6 +325,12 @@ namespace osu.Framework.Platform.SDL3
             EventScheduler.Update();
             Update?.Invoke();
         }
+
+        internal bool DispatchEventFromFilter(SDL_Event e) => HandleEventFromFilter(e);
+
+        internal void DispatchEventFromWatch(SDL_Event e) => HandleEventFromWatch(e);
+
+        internal void DispatchEvent(SDL_Event e) => HandleEvent(e);
 
         /// <summary>
         /// Handles <see cref="SDL_Event"/>s fired from the SDL event filter.
@@ -355,26 +393,6 @@ namespace osu.Framework.Platform.SDL3
             }
         }
 
-        [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvCdecl) })]
-        private static SDLBool eventFilter(IntPtr userdata, SDL_Event* eventPtr)
-        {
-            var handle = new ObjectHandle<SDL3Window>(userdata);
-            if (handle.GetTarget(out SDL3Window window))
-                return window.HandleEventFromFilter(*eventPtr);
-
-            return true;
-        }
-
-        [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvCdecl) })]
-        private static SDLBool eventWatch(IntPtr userdata, SDL_Event* eventPtr)
-        {
-            var handle = new ObjectHandle<SDL3Window>(userdata);
-            if (handle.GetTarget(out SDL3Window window))
-                window.HandleEventFromWatch(*eventPtr);
-
-            return true;
-        }
-
         private bool firstDraw = true;
 
         public void OnDraw()
@@ -393,17 +411,41 @@ namespace osu.Framework.Platform.SDL3
         {
             if (Exists)
             {
-                // Close will be called as part of finishing the Run loop.
                 ScheduleCommand(() => Exists = false);
             }
-            else
+        }
+
+        internal void SetWindowSize(System.Drawing.Size size)
+        {
+            if (size.Width <= 0 || size.Height <= 0)
+                return;
+
+            ScheduleCommand(() =>
             {
                 if (SDLWindowHandle != null)
-                {
-                    SDL_DestroyWindow(SDLWindowHandle);
-                    SDLWindowHandle = null;
-                }
-            }
+                    SDL_SetWindowSize(SDLWindowHandle, size.Width, size.Height).LogErrorIfFailed();
+            });
+        }
+
+        internal void NotifyExited()
+        {
+            if (hasNotifiedExited)
+                return;
+
+            hasNotifiedExited = true;
+            Exited?.Invoke();
+        }
+
+        internal void DestroyNativeWindow()
+        {
+            Exists = false;
+
+            if (SDLWindowHandle == null)
+                return;
+
+            runtime.UnregisterWindow(this);
+            SDL_DestroyWindow(SDLWindowHandle);
+            SDLWindowHandle = null;
         }
 
         public void Raise() => ScheduleCommand(() =>
@@ -488,26 +530,6 @@ namespace osu.Framework.Platform.SDL3
         protected void ScheduleEvent(Action action) => EventScheduler.Add(action, false);
 
         protected void ScheduleCommand(Action action) => commandScheduler.Add(action, false);
-
-        private const int events_per_peep = 64;
-        private readonly SDL_Event[] events = new SDL_Event[events_per_peep];
-
-        /// <summary>
-        /// Poll for all pending events.
-        /// </summary>
-        private void pollSDLEvents()
-        {
-            SDL_PumpEvents();
-
-            int eventsRead;
-
-            do
-            {
-                eventsRead = SDL_PeepEvents(events, SDL_EventAction.SDL_GETEVENT, SDL_EventType.SDL_EVENT_FIRST, SDL_EventType.SDL_EVENT_LAST).LogErrorIfFailed();
-                for (int i = 0; i < eventsRead; i++)
-                    HandleEvent(events[i]);
-            } while (eventsRead == events_per_peep);
-        }
 
         /// <summary>
         /// Handles <see cref="SDL_Event"/>s polled on the main thread.
@@ -700,10 +722,10 @@ namespace osu.Framework.Platform.SDL3
 
         public void Dispose()
         {
-            Close();
-            SDL_Quit();
-
-            ObjectHandle.Dispose();
+            if (isPrimaryWindow)
+                runtime.Shutdown();
+            else
+                Close();
         }
     }
 }

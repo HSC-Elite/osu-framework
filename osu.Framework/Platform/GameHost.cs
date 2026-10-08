@@ -1423,6 +1423,9 @@ namespace osu.Framework.Platform
             Root?.Dispose();
             Root = null;
 
+            if (Renderer is IDisposable disposableRenderer)
+                disposableRenderer.Dispose();
+
             stoppedEvent.Dispose();
 
             inputConfig?.Dispose();

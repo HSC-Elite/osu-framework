@@ -50,6 +50,25 @@ namespace osu.Framework.Platform.Windows
             }
         }
 
+        internal SDL3WindowsWindow(GraphicsSurfaceType surfaceType, string appName, SDL3WindowRuntime runtime)
+            : base(surfaceType, appName, runtime)
+        {
+            switch (surfaceType)
+            {
+                case GraphicsSurfaceType.OpenGL:
+                case GraphicsSurfaceType.Vulkan:
+                    applyBorderlessWindowHack = true;
+                    break;
+
+                case GraphicsSurfaceType.Direct3D11:
+                    applyBorderlessWindowHack = false;
+                    break;
+            }
+        }
+
+        protected override SDL3Window CreateSiblingWindowInstance()
+            => new SDL3WindowsWindow(SurfaceType, AppName, Runtime);
+
         public override void Create()
         {
             base.Create();

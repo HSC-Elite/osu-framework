@@ -34,6 +34,7 @@ namespace osu.Framework.Graphics.Containers
             private Vector2I blurRadius;
             private float blurRotation;
             private float grayscaleStrength;
+            private bool drawToMainBackbuffer;
 
             private long updateVersion;
             private IShader blurShader;
@@ -53,6 +54,7 @@ namespace osu.Framework.Graphics.Containers
                 effectColour = Source.EffectColour;
                 effectBlending = Source.DrawEffectBlending;
                 effectPlacement = Source.EffectPlacement;
+                drawToMainBackbuffer = Source.DrawToMainBackbuffer;
 
                 drawOriginal = Source.DrawOriginal;
                 blurSigma = Source.BlurSigma;
@@ -84,6 +86,11 @@ namespace osu.Framework.Graphics.Containers
 
             protected override void DrawContents(IRenderer renderer)
             {
+                Source.OnFrameBufferDrawn(SharedData.CurrentEffectBuffer);
+
+                if (!drawToMainBackbuffer)
+                    return;
+
                 if (drawOriginal && effectPlacement == EffectPlacement.InFront)
                     base.DrawContents(renderer);
 

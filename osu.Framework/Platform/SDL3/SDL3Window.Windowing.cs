@@ -540,6 +540,7 @@ namespace osu.Framework.Platform.SDL3
                     break;
 
                 case SDL_EventType.SDL_EVENT_WINDOW_CLOSE_REQUESTED:
+                    ExitRequested?.Invoke();
                     break;
             }
 

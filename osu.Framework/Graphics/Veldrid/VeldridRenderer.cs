@@ -17,6 +17,7 @@ using osu.Framework.Graphics.Veldrid.Pipelines;
 using osu.Framework.Graphics.Veldrid.Shaders;
 using osu.Framework.Graphics.Veldrid.Textures;
 using osu.Framework.Graphics.Veldrid.Vertices;
+using osu.Framework.Threading;
 using osuTK;
 using osuTK.Graphics;
 using SixLabors.ImageSharp;
@@ -26,7 +27,7 @@ using PrimitiveTopology = osu.Framework.Graphics.Rendering.PrimitiveTopology;
 
 namespace osu.Framework.Graphics.Veldrid
 {
-    internal class VeldridRenderer : Renderer, IVeldridRenderer
+    internal class VeldridRenderer : Renderer, IVeldridRenderer, IAuxiliaryPresentationRenderer, IDisposable
     {
         protected internal override bool VerticalSync
         {
@@ -73,6 +74,14 @@ namespace osu.Framework.Graphics.Veldrid
         private VeldridIndexBuffer? linearIndexBuffer;
         private VeldridIndexBuffer? quadIndexBuffer;
 
+        private readonly object auxiliaryWindowLock = new object();
+        private IAuxiliaryPresentationWindow? auxiliaryWindow;
+        private AuxiliaryPresenter? auxiliaryPresenter;
+        private IFrameBuffer? auxiliaryPresentationSource;
+        private bool auxiliaryWindowDisposing;
+        private bool rendererDisposed;
+        private Action? releaseAuxiliaryWindow;
+
         protected override void Initialise(IGraphicsSurface graphicsSurface)
         {
             veldridDevice = new VeldridDevice(graphicsSurface);
@@ -86,6 +95,9 @@ namespace osu.Framework.Graphics.Veldrid
 
         protected internal override void BeginFrame(Vector2 windowSize)
         {
+            lock (auxiliaryWindowLock)
+                auxiliaryPresentationSource = null;
+
             foreach (var ubo in uniformBufferResetList)
                 ubo.ResetCounters();
             uniformBufferResetList.Clear();
@@ -99,16 +111,168 @@ namespace osu.Framework.Graphics.Veldrid
 
         protected internal override void FinishFrame()
         {
+            // Flush everything destined for the primary backbuffer first.
             base.FinishFrame();
 
             flushTextureUploadPipeline();
 
             bufferUpdatePipeline.End();
             graphicsPipeline.End();
+
+            drawAuxiliaryWindowFrame();
+        }
+
+        private void drawAuxiliaryWindowFrame()
+        {
+            lock (auxiliaryWindowLock)
+            {
+                if (auxiliaryWindow == null ||
+                    auxiliaryPresenter == null ||
+                    auxiliaryPresentationSource == null ||
+                    auxiliaryWindow.IsClosing)
+                    return;
+
+                Vector2I size = auxiliaryWindow.ClientSize;
+                if (size.X <= 0 || size.Y <= 0)
+                    return;
+
+                auxiliaryPresenter.Resize(size);
+                auxiliaryPresenter.Blit(auxiliaryPresentationSource);
+            }
         }
 
         protected internal override void SwapBuffers()
-            => veldridDevice.SwapBuffers();
+        {
+            veldridDevice.SwapBuffers();
+
+            lock (auxiliaryWindowLock)
+            {
+                if (auxiliaryWindow?.IsClosing == false &&
+                    auxiliaryPresenter != null &&
+                    auxiliaryWindow.ClientSize.X > 0 &&
+                    auxiliaryWindow.ClientSize.Y > 0)
+                {
+                    auxiliaryPresenter.SwapBuffers();
+                }
+            }
+        }
+
+        bool IAuxiliaryPresentationRenderer.SupportsAuxiliarySurface(IGraphicsSurface surface)
+            => surface.Type == GraphicsSurfaceType.Direct3D11;
+
+        void IAuxiliaryPresentationRenderer.RegisterAuxiliaryWindow(IAuxiliaryPresentationWindow window)
+        {
+            if (!((IAuxiliaryPresentationRenderer)this).SupportsAuxiliarySurface(window.GraphicsSurface))
+                throw new NotSupportedException($"Auxiliary presentation does not support the {window.GraphicsSurface.Type} surface.");
+
+            lock (auxiliaryWindowLock)
+            {
+                if (rendererDisposed || auxiliaryWindow != null || auxiliaryWindowDisposing)
+                    throw new InvalidOperationException("Only one external window may be active at a time.");
+
+                auxiliaryWindow = window;
+            }
+
+            ScheduleExpensiveOperation(new ScheduledDelegate(() =>
+            {
+                lock (auxiliaryWindowLock)
+                {
+                    if (rendererDisposed || auxiliaryWindow != window || window.IsClosing)
+                        return;
+
+                    auxiliaryPresenter = new AuxiliaryPresenter(veldridDevice, window.GraphicsSurface, window.ClientSize);
+                }
+            }));
+        }
+
+        void IAuxiliaryPresentationRenderer.SetAuxiliaryPresentationSource(IFrameBuffer frameBuffer)
+        {
+            lock (auxiliaryWindowLock)
+            {
+                if (!rendererDisposed && auxiliaryWindow?.IsClosing == false)
+                    auxiliaryPresentationSource = frameBuffer;
+            }
+        }
+
+        void IAuxiliaryPresentationRenderer.UnregisterAuxiliaryWindow(IAuxiliaryPresentationWindow window, Action releaseWindow)
+        {
+            bool releaseImmediately;
+
+            lock (auxiliaryWindowLock)
+            {
+                releaseImmediately = auxiliaryWindow != window || rendererDisposed;
+
+                if (!releaseImmediately && auxiliaryWindowDisposing)
+                    return;
+
+                if (!releaseImmediately)
+                {
+                    auxiliaryWindowDisposing = true;
+                    auxiliaryPresentationSource = null;
+                    this.releaseAuxiliaryWindow = releaseWindow;
+                }
+            }
+
+            if (releaseImmediately)
+            {
+                releaseWindow();
+                return;
+            }
+
+            ScheduleExpensiveOperation(new ScheduledDelegate(() => disposeAuxiliaryWindow(window)));
+        }
+
+        public void Dispose()
+        {
+            Action? releaseWindow;
+
+            lock (auxiliaryWindowLock)
+            {
+                if (rendererDisposed)
+                    return;
+
+                rendererDisposed = true;
+                auxiliaryWindowDisposing = true;
+                auxiliaryPresentationSource = null;
+
+                if (auxiliaryPresenter != null)
+                {
+                    Device.WaitForIdle();
+                    auxiliaryPresenter.Dispose();
+                    auxiliaryPresenter = null;
+                }
+
+                auxiliaryWindow = null;
+                auxiliaryWindowDisposing = false;
+                releaseWindow = releaseAuxiliaryWindow;
+                releaseAuxiliaryWindow = null;
+            }
+
+            releaseWindow?.Invoke();
+        }
+
+        private void disposeAuxiliaryWindow(IAuxiliaryPresentationWindow window)
+        {
+            Action? releaseWindow = null;
+
+            lock (auxiliaryWindowLock)
+            {
+                if (auxiliaryWindow != window)
+                    return;
+
+                Device.WaitForIdle();
+
+                auxiliaryPresenter?.Dispose();
+                auxiliaryPresenter = null;
+                auxiliaryPresentationSource = null;
+                auxiliaryWindow = null;
+                auxiliaryWindowDisposing = false;
+                releaseWindow = releaseAuxiliaryWindow;
+                releaseAuxiliaryWindow = null;
+            }
+
+            releaseWindow?.Invoke();
+        }
 
         protected internal override void WaitUntilIdle()
             => veldridDevice.WaitUntilIdle();

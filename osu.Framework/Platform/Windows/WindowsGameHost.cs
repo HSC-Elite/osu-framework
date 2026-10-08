@@ -99,6 +99,7 @@ namespace osu.Framework.Platform.Windows
         protected override void Dispose(bool isDisposing)
         {
             timePeriod?.Dispose();
+
             base.Dispose(isDisposing);
         }
 

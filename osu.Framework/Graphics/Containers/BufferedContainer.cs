@@ -44,6 +44,12 @@ namespace osu.Framework.Graphics.Containers
     public partial class BufferedContainer<T> : Container<T>, IBufferedContainer, IBufferedDrawable, IBackbufferProvider
         where T : Drawable
     {
+        internal virtual bool DrawToMainBackbuffer => true;
+
+        internal virtual void OnFrameBufferDrawn(IFrameBuffer frameBuffer)
+        {
+        }
+
         private bool drawOriginal;
 
         /// <summary>
@@ -271,10 +277,20 @@ namespace osu.Framework.Graphics.Containers
         /// When disabled, drawing will be clipped to the game window bounds. Enabling can allow drawing larger than (or outside) the game window bounds.
         /// </param>
         public BufferedContainer(TexturePixelFormat textureFormat = TexturePixelFormat.R8G8B8A8Float, RenderBufferFormat[] formats = null, bool pixelSnapping = false, bool cachedFrameBuffer = false)
+            : this(textureFormat, formats, pixelSnapping, cachedFrameBuffer, !cachedFrameBuffer)
+        {
+        }
+
+        protected BufferedContainer(bool clipToRootNode)
+            : this(TexturePixelFormat.R8G8B8A8Float, null, false, false, clipToRootNode)
+        {
+        }
+
+        private BufferedContainer(TexturePixelFormat textureFormat, RenderBufferFormat[] formats, bool pixelSnapping, bool cachedFrameBuffer, bool clipToRootNode)
         {
             UsingCachedFrameBuffer = cachedFrameBuffer;
 
-            sharedData = new BufferedContainerDrawNodeSharedData(textureFormat, formats, pixelSnapping, !cachedFrameBuffer);
+            sharedData = new BufferedContainerDrawNodeSharedData(textureFormat, formats, pixelSnapping, clipToRootNode);
 
             AddLayout(screenSpaceSizeBacking);
         }

@@ -12,6 +12,11 @@ namespace osu.Framework.Platform.SDL3
         {
         }
 
+        protected SDL3DesktopWindow(GraphicsSurfaceType surfaceType, string appName, SDL3WindowRuntime runtime)
+            : base(surfaceType, appName, runtime)
+        {
+        }
+
         protected override unsafe void UpdateWindowStateAndSize(WindowState state, Display display, DisplayMode displayMode)
         {
             // this reset is required even on changing from one fullscreen resolution to another.
