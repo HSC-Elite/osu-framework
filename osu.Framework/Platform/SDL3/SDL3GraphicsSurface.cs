@@ -36,6 +36,9 @@ namespace osu.Framework.Platform.SDL3
                     SDL_GL_SetAttribute(SDL_GLAttr.SDL_GL_RED_SIZE, 8).ThrowIfFailed();
                     SDL_GL_SetAttribute(SDL_GLAttr.SDL_GL_GREEN_SIZE, 8).ThrowIfFailed();
                     SDL_GL_SetAttribute(SDL_GLAttr.SDL_GL_BLUE_SIZE, 8).ThrowIfFailed();
+
+                    SDL_GL_SetAttribute(SDL_GLAttr.SDL_GL_ALPHA_SIZE, 8).ThrowIfFailed();
+
                     SDL_GL_SetAttribute(SDL_GLAttr.SDL_GL_ACCUM_ALPHA_SIZE, 0).ThrowIfFailed();
                     SDL_GL_SetAttribute(SDL_GLAttr.SDL_GL_DEPTH_SIZE, 16).ThrowIfFailed();
                     SDL_GL_SetAttribute(SDL_GLAttr.SDL_GL_STENCIL_SIZE, 8).ThrowIfFailed();
