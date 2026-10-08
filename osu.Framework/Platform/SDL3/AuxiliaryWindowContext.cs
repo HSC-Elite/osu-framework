@@ -18,6 +18,8 @@ namespace osu.Framework.Platform.SDL3
         private readonly GameHost host;
         private readonly SDL3Window window;
         private readonly ISDLWindow inputWindow;
+        private Vector2I? lastRequestedLogicalSize;
+        private Vector2I? lastRequestedFixedSize;
         private int isClosing;
         private int isDisposed;
 
@@ -51,7 +53,7 @@ namespace osu.Framework.Platform.SDL3
         public event Action<string>? TextInput;
         public event Action<string, int, int>? ImeComposition;
         public event Action<bool>? FocusChanged;
-        public event Action<Vector2I>? ClientSizeChanged;
+        public event Action<Vector2I>? LogicalSizeChanged;
         public event Action? CloseRequested;
 
         public AuxiliaryWindowContext(GameHost host, SDL3Window window)
@@ -59,6 +61,7 @@ namespace osu.Framework.Platform.SDL3
             this.host = host;
             this.window = window;
             inputWindow = window;
+            lastRequestedLogicalSize = LogicalSize;
 
             inputWindow.MouseMove += onMouseMoved;
             inputWindow.MouseDown += onMouseDown;
@@ -69,14 +72,34 @@ namespace osu.Framework.Platform.SDL3
             inputWindow.TextInput += onTextInput;
             inputWindow.TextEditing += onImeComposition;
             inputWindow.IsActive.ValueChanged += onFocusChanged;
-            window.Resized += onClientSizeChanged;
+            window.Resized += onLogicalSizeChanged;
             window.ExitRequested += onCloseRequested;
         }
 
-        public void Resize(Vector2I size)
+        public void UpdateLogicalSize(Vector2I size, Vector2I fixedSize, bool forceResize = false)
         {
-            if (size.X > 0 && size.Y > 0)
-                window.SetWindowSize(new System.Drawing.Size(size.X, size.Y));
+            if (size.X <= 0 || size.Y <= 0 || fixedSize.X < 0 || fixedSize.Y < 0)
+                return;
+
+            bool updateSize = forceResize || lastRequestedLogicalSize != size;
+            bool updateConstraints = lastRequestedFixedSize != fixedSize;
+
+            if (!updateSize && !updateConstraints)
+                return;
+
+            window.SetWindowSizeAndConstraints(
+                new System.Drawing.Size(size.X, size.Y),
+                new System.Drawing.Size(fixedSize.X, fixedSize.Y),
+                updateSize,
+                updateConstraints);
+            lastRequestedLogicalSize = size;
+            lastRequestedFixedSize = fixedSize;
+        }
+
+        public void ObserveLogicalSize(Vector2I size, bool acceptAsRequested)
+        {
+            if (acceptAsRequested && size.X > 0 && size.Y > 0)
+                lastRequestedLogicalSize = size;
         }
 
         public void BeginClose() => Interlocked.Exchange(ref isClosing, 1);
@@ -110,10 +133,10 @@ namespace osu.Framework.Platform.SDL3
         private void onFocusChanged(ValueChangedEvent<bool> value)
             => FocusChanged?.Invoke(value.NewValue);
 
-        private void onClientSizeChanged()
+        private void onLogicalSizeChanged()
         {
             Vector2I size = LogicalSize;
-            ClientSizeChanged?.Invoke(size);
+            LogicalSizeChanged?.Invoke(size);
         }
 
         private void onCloseRequested()
@@ -138,7 +161,7 @@ namespace osu.Framework.Platform.SDL3
             inputWindow.TextInput -= onTextInput;
             inputWindow.TextEditing -= onImeComposition;
             inputWindow.IsActive.ValueChanged -= onFocusChanged;
-            window.Resized -= onClientSizeChanged;
+            window.Resized -= onLogicalSizeChanged;
             window.ExitRequested -= onCloseRequested;
 
             window.Dispose();

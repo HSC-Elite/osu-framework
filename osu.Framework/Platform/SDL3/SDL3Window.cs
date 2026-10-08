@@ -421,15 +421,32 @@ namespace osu.Framework.Platform.SDL3
             }
         }
 
-        internal void SetWindowSize(System.Drawing.Size size)
+        internal void SetWindowSizeAndConstraints(System.Drawing.Size size, System.Drawing.Size fixedSize, bool updateSize, bool updateConstraints)
         {
-            if (size.Width <= 0 || size.Height <= 0)
+            if (size.Width <= 0 || size.Height <= 0 || fixedSize.Width < 0 || fixedSize.Height < 0)
                 return;
 
             ScheduleCommand(() =>
             {
-                if (SDLWindowHandle != null)
+                if (SDLWindowHandle == null)
+                    return;
+
+                if (updateConstraints)
+                {
+                    // Clear both old limits before applying the new pair so changing a fixed size cannot
+                    // temporarily leave the minimum larger than the maximum (or vice versa).
+                    SDL_SetWindowMaximumSize(SDLWindowHandle, 0, 0).LogErrorIfFailed();
+                    SDL_SetWindowMinimumSize(SDLWindowHandle, 0, 0).LogErrorIfFailed();
+                }
+
+                if (updateSize)
                     SDL_SetWindowSize(SDLWindowHandle, size.Width, size.Height).LogErrorIfFailed();
+
+                if (updateConstraints)
+                {
+                    SDL_SetWindowMinimumSize(SDLWindowHandle, fixedSize.Width, fixedSize.Height).LogErrorIfFailed();
+                    SDL_SetWindowMaximumSize(SDLWindowHandle, fixedSize.Width, fixedSize.Height).LogErrorIfFailed();
+                }
             });
         }
 

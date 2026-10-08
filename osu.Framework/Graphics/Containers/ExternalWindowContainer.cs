@@ -5,7 +5,6 @@ using System;
 using System.Collections.Generic;
 using System.Threading;
 using osu.Framework.Allocation;
-using osu.Framework.Graphics.Containers;
 using osu.Framework.Graphics.Primitives;
 using osu.Framework.Graphics.Rendering;
 using osu.Framework.Graphics.Visualisation;
@@ -16,7 +15,6 @@ using osu.Framework.Input.Handlers;
 using osu.Framework.Platform;
 using osu.Framework.Platform.SDL3;
 using osuTK;
-using osuTK.Graphics;
 
 namespace osu.Framework.Graphics.Containers
 {
@@ -33,7 +31,7 @@ namespace osu.Framework.Graphics.Containers
         private IAuxiliaryPresentationRenderer presentationRenderer = null!;
         private AuxiliaryWindowContext? windowContext;
         private CompositeDrawable? subscribedParent;
-        private Vector2 clientSize = new Vector2(800, 600);
+        private Vector2I? lastResizeCorrectionTarget;
         private int windowCreationPending;
         private int closing;
 
@@ -48,21 +46,38 @@ namespace osu.Framework.Graphics.Containers
 
         public string WindowTitle { get; set; } = "External Window";
 
-        public Vector2 ClientSize
-        {
-            get => clientSize;
-            set => setClientSize(value, true);
-        }
-
         public ExternalWindowContainer()
             : base(clipToRootNode: false)
         {
             inputManager = new AuxiliaryInputManager(toggleExternalDrawVisualiser);
             InternalChild = inputManager;
 
-            Size = clientSize;
+            Size = new Vector2(800, 600);
+            updateInputSizingPolicy();
 
             AlwaysPresent = true;
+        }
+
+        protected override void OnSizingChanged()
+        {
+            base.OnSizingChanged();
+
+            updateInputSizingPolicy();
+        }
+
+        public override Axes RelativeSizeAxes
+        {
+            get => Axes.None;
+            set
+            {
+                if (value != Axes.None)
+                {
+                    throw new InvalidOperationException(
+                        $"{nameof(ExternalWindowContainer)} does not support relative sizing.");
+                }
+
+                base.RelativeSizeAxes = Axes.None;
+            }
         }
 
         [BackgroundDependencyLoader]
@@ -86,6 +101,7 @@ namespace osu.Framework.Graphics.Containers
             base.LoadComplete();
 
             subscribedParent = Parent;
+
             if (subscribedParent != null)
             {
                 subscribedParent.ChildDied += onParentChildDied;
@@ -104,9 +120,8 @@ namespace osu.Framework.Graphics.Containers
                 return;
             }
 
-            var size = new System.Drawing.Size(
-                Math.Max(1, (int)MathF.Ceiling(clientSize.X)),
-                Math.Max(1, (int)MathF.Ceiling(clientSize.Y)));
+            Vector2I logicalSize = toLogicalWindowSize(DrawSize);
+            var size = new System.Drawing.Size(logicalSize.X, logicalSize.Y);
 
             primaryWindow.CreateSiblingWindow(WindowTitle, size, nativeWindow =>
             {
@@ -149,30 +164,91 @@ namespace osu.Framework.Graphics.Containers
             inputManager.SetWindow(context);
             textInputSource.Attach(context, rectangle =>
                 ToLocalSpace(new Quad(rectangle.X, rectangle.Y, rectangle.Width, rectangle.Height)).AABBFloat);
-            context.ClientSizeChanged += onNativeClientSizeChanged;
+            context.LogicalSizeChanged += onNativeLogicalSizeChanged;
             context.CloseRequested += onWindowCloseRequested;
+
+            lastResizeCorrectionTarget = null;
+            updateAuxiliaryWindowSize();
         }
 
-        private void onNativeClientSizeChanged(Vector2I newSize)
-            => Scheduler.Add(() => setClientSize(new Vector2(newSize.X, newSize.Y), false), false);
+        private void onNativeLogicalSizeChanged(Vector2I newSize)
+            => Scheduler.Add(() => handleNativeLogicalSizeChanged(newSize), false);
 
-        private void setClientSize(Vector2 newSize, bool resizeWindow)
+        private void handleNativeLogicalSizeChanged(Vector2I newSize)
         {
-            if (newSize.X <= 0 || newSize.Y <= 0 || clientSize == newSize)
+            if (newSize.X <= 0 || newSize.Y <= 0)
                 return;
 
-            clientSize = newSize;
-            Size = newSize;
+            Axes autoSizeAxes = AutoSizeAxes;
 
+            if ((autoSizeAxes & Axes.X) == 0)
+                Width = newSize.X;
+
+            if ((autoSizeAxes & Axes.Y) == 0)
+                Height = newSize.Y;
+
+            Vector2I requestedSize = toLogicalWindowSize(DrawSize);
+            bool autoSizedSizeMismatch =
+                ((autoSizeAxes & Axes.X) != 0 && newSize.X != requestedSize.X) ||
+                ((autoSizeAxes & Axes.Y) != 0 && newSize.Y != requestedSize.Y);
             AuxiliaryWindowContext? context = Volatile.Read(ref windowContext);
+            context?.ObserveLogicalSize(newSize, !autoSizedSizeMismatch);
 
-            if (resizeWindow && context != null)
+            if (!autoSizedSizeMismatch)
             {
-                context.Resize(new Vector2I(
-                    Math.Max(1, (int)MathF.Ceiling(newSize.X)),
-                    Math.Max(1, (int)MathF.Ceiling(newSize.Y))));
+                lastResizeCorrectionTarget = null;
+                return;
             }
+
+            // A window manager may ignore native size constraints. Avoid repeatedly issuing the same correction
+            // if it continues reporting a size that differs from the auto-sized Drawable layout.
+            if (lastResizeCorrectionTarget == requestedSize)
+                return;
+
+            lastResizeCorrectionTarget = requestedSize;
+            context?.UpdateLogicalSize(requestedSize, getFixedLogicalSize(requestedSize), true);
         }
+
+        protected override void UpdateAfterAutoSize()
+        {
+            base.UpdateAfterAutoSize();
+            updateAuxiliaryWindowSize();
+        }
+
+        private void updateInputSizingPolicy()
+        {
+            Axes autoSizeAxes = AutoSizeAxes;
+            applySizingPolicy(inputManager, autoSizeAxes);
+            inputManager.ApplySizingPolicy(autoSizeAxes);
+        }
+
+        private void updateAuxiliaryWindowSize(bool forceResize = false)
+        {
+            AuxiliaryWindowContext? context = Volatile.Read(ref windowContext);
+            if (context == null)
+                return;
+
+            Vector2I logicalSize = toLogicalWindowSize(DrawSize);
+            context.UpdateLogicalSize(logicalSize, getFixedLogicalSize(logicalSize), forceResize);
+        }
+
+        private static void applySizingPolicy(Container drawable, Axes autoSizeAxes)
+        {
+            drawable.RelativeSizeAxes &= ~autoSizeAxes;
+            drawable.AutoSizeAxes = autoSizeAxes;
+            drawable.RelativeSizeAxes = Axes.Both & ~autoSizeAxes;
+        }
+
+        private Vector2I getFixedLogicalSize(Vector2I logicalSize)
+        {
+            Axes autoSizeAxes = AutoSizeAxes;
+            return new Vector2I(
+                (autoSizeAxes & Axes.X) != 0 ? logicalSize.X : 0,
+                (autoSizeAxes & Axes.Y) != 0 ? logicalSize.Y : 0);
+        }
+
+        private static Vector2I toLogicalWindowSize(Vector2 size)
+            => new Vector2I(Math.Max(1, (int)MathF.Ceiling(size.X)), Math.Max(1, (int)MathF.Ceiling(size.Y)));
 
         private void onWindowCloseRequested()
             => Scheduler.Add(Expire, false);
@@ -194,8 +270,10 @@ namespace osu.Framework.Graphics.Containers
             AuxiliaryWindowContext? context = Interlocked.Exchange(ref windowContext, null);
             if (context == null)
                 return;
-            context.ClientSizeChanged -= onNativeClientSizeChanged;
+
+            context.LogicalSizeChanged -= onNativeLogicalSizeChanged;
             context.CloseRequested -= onWindowCloseRequested;
+            lastResizeCorrectionTarget = null;
             context.BeginClose();
 
             inputManager.SetWindow(null);
@@ -245,6 +323,8 @@ namespace osu.Framework.Graphics.Containers
         private sealed partial class AuxiliaryInputManager : CustomInputManager
         {
             private readonly Container content = new Container { RelativeSizeAxes = Axes.Both };
+            private readonly PlatformActionContainer platformActionContainer;
+            private readonly AuxiliaryWindowFrameworkActionContainer frameworkActionContainer;
             private AuxiliaryWindowContext? window;
             private AuxiliaryWindowInputHandler? handler;
 
@@ -258,19 +338,26 @@ namespace osu.Framework.Graphics.Containers
 
             public AuxiliaryInputManager(Action toggleDrawVisualiser)
             {
-                AddInternal(new PlatformActionContainer
+                frameworkActionContainer = new AuxiliaryWindowFrameworkActionContainer(toggleDrawVisualiser)
                 {
-                    Child = new AuxiliaryWindowFrameworkActionContainer(toggleDrawVisualiser)
-                    {
-                        Child = content,
-                    },
-                });
+                    Child = content,
+                };
+                platformActionContainer = new PlatformActionContainer { Child = frameworkActionContainer };
+                AddInternal(platformActionContainer);
+            }
+
+            public void ApplySizingPolicy(Axes autoSizeAxes)
+            {
+                applySizingPolicy(platformActionContainer, autoSizeAxes);
+                applySizingPolicy(frameworkActionContainer, autoSizeAxes);
+                applySizingPolicy(content, autoSizeAxes);
             }
 
             public void LoadDrawVisualiser(DrawVisualiser visualiser)
             {
                 LoadComponentAsync(visualiser, loadedVisualiser =>
                 {
+                    loadedVisualiser.BypassAutoSizeAxes = Axes.Both;
                     AddInternal(loadedVisualiser);
                     ChangeOverlayDepth(loadedVisualiser, float.MinValue);
                 });
@@ -348,9 +435,7 @@ namespace osu.Framework.Graphics.Containers
         }
 
         [DrawVisualiserHidden]
-        private sealed partial class AuxiliaryDrawVisualiser : DrawVisualiser
-        {
-        }
+        private sealed partial class AuxiliaryDrawVisualiser : DrawVisualiser;
 
         private sealed class AuxiliaryWindowTextInputSource : TextInputSource
         {
@@ -405,7 +490,6 @@ namespace osu.Framework.Graphics.Containers
 
             private void onImeComposition(string text, int start, int length)
                 => TriggerImeComposition(text, start, length);
-
         }
     }
 }

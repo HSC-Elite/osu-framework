@@ -18,6 +18,31 @@ namespace osu.Framework.Tests.Visual.Drawables
     {
         private static readonly object[][] scales = Enumerable.Range(0, 10).Select(i => new object[] { MathF.Pow(10, -i) }).ToArray();
 
+        [Test]
+        public void TestAutoSizeResultSurvivesDisablingAutoSize()
+        {
+            Container autoSizeContainer = null!;
+            Box child = null!;
+
+            AddStep("add autosize container", () =>
+            {
+                Add(autoSizeContainer = new Container
+                {
+                    AutoSizeAxes = Axes.X,
+                    Height = 64,
+                    Child = child = new Box { Size = new Vector2(128, 32) },
+                });
+            });
+
+            AddAssert("initial autosize width", () => autoSizeContainer.Width, () => Is.EqualTo(128).Within(Precision.FLOAT_EPSILON));
+
+            AddStep("resize child", () => child.Width = 256);
+            AddAssert("updated autosize width", () => autoSizeContainer.Width, () => Is.EqualTo(256).Within(Precision.FLOAT_EPSILON));
+
+            AddStep("disable autosize", () => autoSizeContainer.AutoSizeAxes = Axes.None);
+            AddAssert("last autosize width is retained", () => autoSizeContainer.Width, () => Is.EqualTo(256).Within(Precision.FLOAT_EPSILON));
+        }
+
         [TestCaseSource(nameof(scales))]
         public void TestAlmostZeroXScale(float scale)
         {
