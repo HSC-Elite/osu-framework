@@ -53,9 +53,11 @@ namespace osu.Framework.Graphics.Veldrid.Textures
         {
             samplerFilter = filteringMode.ToSamplerFilter();
 
-            if (!D3D11Interop.TryGetD3D11Device(renderer, out d3dDevice, out var context, out d3dInfo))
+            if (!D3D11Interop.TryGetD3D11Device(renderer, out var device, out var context, out var info))
                 throw new InvalidOperationException("Renderer is not a Veldrid D3D11 renderer.");
 
+            d3dDevice = device;
+            d3dInfo = info;
             d3dContext = context;
             ensureResources(width, height);
         }
