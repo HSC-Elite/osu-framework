@@ -260,10 +260,19 @@ namespace osu.Framework.Platform.SDL3
             SDL_StopTextInput(SDLWindowHandle).LogErrorIfFailed();
 
             runtime.RegisterWindow(this);
-            graphicsSurface.Initialise();
+            try
+            {
+                graphicsSurface.Initialise();
+                initialiseWindowingAfterCreation();
+                Exists = true;
+            }
+            catch
+            {
+                if (graphicsSurface.Type == GraphicsSurfaceType.Metal)
+                    DestroyNativeWindow();
 
-            initialiseWindowingAfterCreation();
-            Exists = true;
+                throw;
+            }
         }
 
         /// <summary>
@@ -440,9 +449,28 @@ namespace osu.Framework.Platform.SDL3
             if (SDLWindowHandle == null)
                 return;
 
-            runtime.UnregisterWindow(this);
-            SDL_DestroyWindow(SDLWindowHandle);
-            SDLWindowHandle = null;
+            try
+            {
+                runtime.UnregisterWindow(this);
+            }
+            finally
+            {
+                try
+                {
+                    graphicsSurface.Destroy();
+                }
+                finally
+                {
+                    try
+                    {
+                        SDL_DestroyWindow(SDLWindowHandle);
+                    }
+                    finally
+                    {
+                        SDLWindowHandle = null;
+                    }
+                }
+            }
         }
 
         public void Raise() => ScheduleCommand(() =>

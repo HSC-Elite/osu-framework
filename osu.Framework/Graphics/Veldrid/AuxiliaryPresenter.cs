@@ -64,25 +64,48 @@ namespace osu.Framework.Graphics.Veldrid
             this.factory = factory;
             this.device = device;
 
-            shaders = factory.CreateFromSpirv(
+            Shader[] createdShaders = factory.CreateFromSpirv(
                 new ShaderDescription(ShaderStages.Vertex, Encoding.UTF8.GetBytes(vertexShaderSource), "main"),
                 new ShaderDescription(ShaderStages.Fragment, Encoding.UTF8.GetBytes(fragmentShaderSource), "main"));
 
-            textureLayout = factory.CreateResourceLayout(new ResourceLayoutDescription(
-                new ResourceLayoutElementDescription("sourceTexture", ResourceKind.TextureReadOnly, ShaderStages.Fragment),
-                new ResourceLayoutElementDescription("sourceSampler", ResourceKind.Sampler, ShaderStages.Fragment)));
+            ResourceLayout? createdTextureLayout = null;
+            Pipeline? createdPipeline = null;
+            CommandList? createdCommands = null;
 
-            var pipelineDescription = new GraphicsPipelineDescription(
-                BlendStateDescription.SINGLE_OVERRIDE_BLEND,
-                new DepthStencilStateDescription(false, false, ComparisonKind.Always),
-                RasterizerStateDescription.CULL_NONE,
-                PrimitiveTopology.TriangleList,
-                new ShaderSetDescription(Array.Empty<VertexLayoutDescription>(), shaders),
-                new[] { textureLayout },
-                outputDescription);
+            try
+            {
+                createdTextureLayout = factory.CreateResourceLayout(new ResourceLayoutDescription(
+                    new ResourceLayoutElementDescription("sourceTexture", ResourceKind.TextureReadOnly, ShaderStages.Fragment),
+                    new ResourceLayoutElementDescription("sourceSampler", ResourceKind.Sampler, ShaderStages.Fragment)));
 
-            pipeline = factory.CreateGraphicsPipeline(ref pipelineDescription);
-            commands = factory.CreateCommandList();
+                var pipelineDescription = new GraphicsPipelineDescription(
+                    BlendStateDescription.SINGLE_OVERRIDE_BLEND,
+                    new DepthStencilStateDescription(false, false, ComparisonKind.Always),
+                    RasterizerStateDescription.CULL_NONE,
+                    PrimitiveTopology.TriangleList,
+                    new ShaderSetDescription(Array.Empty<VertexLayoutDescription>(), createdShaders),
+                    new[] { createdTextureLayout },
+                    outputDescription);
+
+                createdPipeline = factory.CreateGraphicsPipeline(ref pipelineDescription);
+                createdCommands = factory.CreateCommandList();
+            }
+            catch
+            {
+                createdCommands?.Dispose();
+                createdPipeline?.Dispose();
+                createdTextureLayout?.Dispose();
+
+                foreach (Shader shader in createdShaders)
+                    shader.Dispose();
+
+                throw;
+            }
+
+            shaders = createdShaders;
+            textureLayout = createdTextureLayout;
+            pipeline = createdPipeline;
+            commands = createdCommands;
         }
 
         public void Blit(IFrameBuffer source, Framebuffer target, int width, int height)
@@ -157,7 +180,15 @@ namespace osu.Framework.Graphics.Veldrid
                 ColorSrgb = false,
             });
 
-            blitter = new AuxiliaryBlitter(device.Factory, device.Device, swapchain.Framebuffer.OutputDescription);
+            try
+            {
+                blitter = new AuxiliaryBlitter(device.Factory, device.Device, swapchain.Framebuffer.OutputDescription);
+            }
+            catch
+            {
+                swapchain.Dispose();
+                throw;
+            }
         }
 
         public void Resize(Vector2I newSize)

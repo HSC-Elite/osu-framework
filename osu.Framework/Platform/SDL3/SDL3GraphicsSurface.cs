@@ -69,6 +69,15 @@ namespace osu.Framework.Platform.SDL3
             }
         }
 
+        internal void Destroy()
+        {
+            if (metalView == IntPtr.Zero)
+                return;
+
+            SDL_Metal_DestroyView(metalView);
+            metalView = IntPtr.Zero;
+        }
+
         public Size GetDrawableSize()
         {
             int width, height;

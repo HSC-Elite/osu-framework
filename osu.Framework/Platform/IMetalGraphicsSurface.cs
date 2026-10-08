@@ -11,7 +11,7 @@ namespace osu.Framework.Platform
     public interface IMetalGraphicsSurface
     {
         /// <summary>
-        /// Creates an NSView backed with a Metal layer.
+        /// Returns a platform view backed with a Metal layer for use as a presentation surface.
         /// </summary>
         IntPtr CreateMetalView();
     }
