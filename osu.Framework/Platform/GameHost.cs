@@ -76,9 +76,11 @@ namespace osu.Framework.Platform
         private InputConfigManager inputConfig { get; set; }
 
         /// <summary>
-        /// Whether the <see cref="IWindow"/> is active (in the foreground).
+        /// Whether any window owned by this host is active (in the foreground).
         /// </summary>
         public readonly IBindable<bool> IsActive = new Bindable<bool>(true);
+
+        private readonly AggregateBindable<bool> windowActivity = new AggregateBindable<bool>((a, b) => a || b);
 
         /// <summary>
         /// Disable any system level timers that might dim or turn off the screen.
@@ -94,12 +96,18 @@ namespace osu.Framework.Platform
         public virtual bool IsPrimaryInstance { get; protected set; } = true;
 
         /// <summary>
-        /// Invoked when the game window is activated. Always invoked from the update thread.
+        /// Invoked when a window owned by this host is activated. Always invoked from the update thread.
         /// </summary>
         public event Action Activated;
 
+        internal void RegisterAuxiliaryWindow(IWindow window)
+            => windowActivity.AddSource(window.IsActive);
+
+        internal void UnregisterAuxiliaryWindow(IWindow window)
+            => windowActivity.RemoveSource(window.IsActive);
+
         /// <summary>
-        /// Invoked when the game window is deactivated. Always invoked from the update thread.
+        /// Invoked when all windows owned by this host are deactivated. Always invoked from the update thread.
         /// </summary>
         public event Action Deactivated;
 
@@ -1058,7 +1066,8 @@ namespace osu.Framework.Platform
                 }
             }, true);
 
-            IsActive.BindTo(Window.IsActive);
+            windowActivity.AddSource(Window.IsActive);
+            IsActive.BindTo(windowActivity.Result);
 
             AllowScreenSuspension.Result.BindValueChanged(e =>
             {
@@ -1425,6 +1434,9 @@ namespace osu.Framework.Platform
 
             if (Renderer is IDisposable disposableRenderer)
                 disposableRenderer.Dispose();
+
+            IsActive.UnbindFrom(windowActivity.Result);
+            windowActivity.RemoveAllSources();
 
             stoppedEvent.Dispose();
 

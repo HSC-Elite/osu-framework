@@ -74,6 +74,8 @@ namespace osu.Framework.Platform.SDL3
             inputWindow.IsActive.ValueChanged += onFocusChanged;
             window.Resized += onLogicalSizeChanged;
             window.ExitRequested += onCloseRequested;
+
+            host.RegisterAuxiliaryWindow(window);
         }
 
         public void UpdateLogicalSize(Vector2I size, Vector2I fixedSize, bool forceResize = false)
@@ -164,6 +166,7 @@ namespace osu.Framework.Platform.SDL3
             window.Resized -= onLogicalSizeChanged;
             window.ExitRequested -= onCloseRequested;
 
+            host.UnregisterAuxiliaryWindow(window);
             window.Dispose();
         }
     }
