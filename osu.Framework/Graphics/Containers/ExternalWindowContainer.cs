@@ -5,6 +5,7 @@ using System;
 using System.Collections.Generic;
 using System.Threading;
 using osu.Framework.Allocation;
+using osu.Framework.Bindables;
 using osu.Framework.Graphics.Primitives;
 using osu.Framework.Graphics.Rendering;
 using osu.Framework.Graphics.Visualisation;
@@ -232,7 +233,7 @@ namespace osu.Framework.Graphics.Containers
             context.UpdateLogicalSize(logicalSize, getFixedLogicalSize(logicalSize), forceResize);
         }
 
-        private static void applySizingPolicy(Container drawable, Axes autoSizeAxes)
+        private static void applySizingPolicy(Container<Drawable> drawable, Axes autoSizeAxes)
         {
             drawable.RelativeSizeAxes &= ~autoSizeAxes;
             drawable.AutoSizeAxes = autoSizeAxes;
@@ -323,6 +324,7 @@ namespace osu.Framework.Graphics.Containers
         private sealed partial class AuxiliaryInputManager : CustomInputManager
         {
             private readonly Container content = new Container { RelativeSizeAxes = Axes.Both };
+            private readonly SafeAreaDefiningContainer contentRoot;
             private readonly PlatformActionContainer platformActionContainer;
             private readonly AuxiliaryWindowFrameworkActionContainer frameworkActionContainer;
             private AuxiliaryWindowContext? window;
@@ -338,9 +340,16 @@ namespace osu.Framework.Graphics.Containers
 
             public AuxiliaryInputManager(Action toggleDrawVisualiser)
             {
+                contentRoot = new BypassSafeAreaDefiningContainer()
+                {
+                    Name = "External SafeZone",
+                    RelativeSizeAxes = Axes.Both,
+                    Child = content,
+                };
+
                 frameworkActionContainer = new AuxiliaryWindowFrameworkActionContainer(toggleDrawVisualiser)
                 {
-                    Child = content,
+                    Child = contentRoot,
                 };
                 platformActionContainer = new PlatformActionContainer { Child = frameworkActionContainer };
                 AddInternal(platformActionContainer);
@@ -350,6 +359,7 @@ namespace osu.Framework.Graphics.Containers
             {
                 applySizingPolicy(platformActionContainer, autoSizeAxes);
                 applySizingPolicy(frameworkActionContainer, autoSizeAxes);
+                applySizingPolicy(contentRoot, autoSizeAxes);
                 applySizingPolicy(content, autoSizeAxes);
             }
 
@@ -388,6 +398,7 @@ namespace osu.Framework.Graphics.Containers
             {
                 base.LoadComplete();
                 addInputHandler();
+                dependencies.CacheAs<ISafeArea>(contentRoot);
             }
 
             private void addInputHandler()
@@ -399,6 +410,13 @@ namespace osu.Framework.Graphics.Containers
 
                 handler = new AuxiliaryWindowInputHandler(currentWindow, ToScreenSpace);
                 AddHandler(handler);
+            }
+
+            private DependencyContainer dependencies = null!;
+
+            protected override IReadOnlyDependencyContainer CreateChildDependencies(IReadOnlyDependencyContainer parent)
+            {
+                return dependencies = new DependencyContainer(base.CreateChildDependencies(parent));
             }
 
             private sealed partial class AuxiliaryWindowFrameworkActionContainer
@@ -431,6 +449,15 @@ namespace osu.Framework.Graphics.Containers
                 }
 
                 protected override bool Prioritised => true;
+            }
+
+            public partial class BypassSafeAreaDefiningContainer : SafeAreaDefiningContainer
+            {
+                public BypassSafeAreaDefiningContainer()
+                    : base(new BindableSafeArea())
+                {
+                    RelativeSizeAxes = Axes.Both;
+                }
             }
         }
 
