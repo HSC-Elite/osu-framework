@@ -108,7 +108,7 @@ namespace osu.Framework.Graphics.Veldrid
             commands = createdCommands;
         }
 
-        public void Blit(IFrameBuffer source, Framebuffer target, int width, int height)
+        public void Blit(IFrameBuffer source, Framebuffer target)
         {
             var texture = (VeldridTexture)source.Texture.NativeTexture;
             VeldridTextureResources textureResources = texture.GetResourceList().Single();
@@ -129,8 +129,9 @@ namespace osu.Framework.Graphics.Veldrid
             commands.Begin();
             commands.SetFramebuffer(target);
             commands.ClearColorTarget(0, new RgbaFloat(0, 0, 0, 1));
-            commands.SetViewport(0, new Viewport(0, 0, width, height, 0, 1));
-            commands.SetScissorRect(0, 0, 0, (uint)width, (uint)height);
+            // The source texture may have a different DPI scale than the swapchain.
+            commands.SetViewport(0, new Viewport(0, 0, target.Width, target.Height, 0, 1));
+            commands.SetScissorRect(0, 0, 0, target.Width, target.Height);
             commands.SetPipeline(pipeline);
             commands.SetGraphicsResourceSet(0, textureResourceSet);
             commands.Draw(3);
@@ -164,10 +165,12 @@ namespace osu.Framework.Graphics.Veldrid
         private Vector2I size;
         private bool isDisposed;
 
-        public AuxiliaryPresenter(VeldridDevice device, IGraphicsSurface graphicsSurface, Vector2I initialSize)
+        public AuxiliaryPresenter(VeldridDevice device, IGraphicsSurface graphicsSurface)
         {
             this.device = device;
-            size = initialSize;
+            // Swapchain dimensions are drawable pixels, independent of logical layout and input coordinates.
+            var drawableSize = graphicsSurface.GetDrawableSize();
+            size = new Vector2I(drawableSize.Width, drawableSize.Height);
 
             swapchain = device.Factory.CreateSwapchain(new SwapchainDescription
             {
@@ -182,6 +185,9 @@ namespace osu.Framework.Graphics.Veldrid
 
             try
             {
+                // Metal creates the swapchain from NSView.frame in logical points, ignoring the requested pixel size.
+                // Resize explicitly when the resulting framebuffer does not match the drawable pixels.
+                Resize(size);
                 blitter = new AuxiliaryBlitter(device.Factory, device.Device, swapchain.Framebuffer.OutputDescription);
             }
             catch
@@ -193,7 +199,10 @@ namespace osu.Framework.Graphics.Veldrid
 
         public void Resize(Vector2I newSize)
         {
-            if (newSize.X <= 0 || newSize.Y <= 0 || newSize == size)
+            if (newSize.X <= 0 || newSize.Y <= 0)
+                return;
+
+            if (newSize == size && swapchain.Framebuffer.Width == (uint)newSize.X && swapchain.Framebuffer.Height == (uint)newSize.Y)
                 return;
 
             device.WaitUntilIdle();
@@ -206,7 +215,7 @@ namespace osu.Framework.Graphics.Veldrid
             if (size.X <= 0 || size.Y <= 0)
                 return;
 
-            blitter.Blit(source, swapchain.Framebuffer, size.X, size.Y);
+            blitter.Blit(source, swapchain.Framebuffer);
         }
 
         public void SwapBuffers() => device.Device.SwapBuffers(swapchain);

@@ -171,6 +171,7 @@ namespace osu.Framework.Platform.SDL3
                 float rx = x - pos.X;
                 float ry = y - pos.Y;
 
+                MouseMoveLogical?.Invoke(new Vector2(rx, ry));
                 MouseMove?.Invoke(new Vector2(rx * Scale, ry * Scale));
             }
 
@@ -479,6 +480,9 @@ namespace osu.Framework.Platform.SDL3
             SDL_MouseButtonFlags mask = SDL_BUTTON(evtButton.Button);
             Debug.Assert(Enum.IsDefined(mask));
 
+            // Auxiliary windows use the logical position carried by the button event, even without a preceding motion event.
+            MouseMoveLogical?.Invoke(new Vector2(evtButton.x, evtButton.y));
+
             switch (evtButton.type)
             {
                 case SDL_EventType.SDL_EVENT_MOUSE_BUTTON_DOWN:
@@ -496,7 +500,10 @@ namespace osu.Framework.Platform.SDL3
         private void handleMouseMotionEvent(SDL_MouseMotionEvent evtMotion)
         {
             if (!SDL_GetWindowRelativeMouseMode(SDLWindowHandle))
+            {
+                MouseMoveLogical?.Invoke(new Vector2(evtMotion.x, evtMotion.y));
                 MouseMove?.Invoke(new Vector2(evtMotion.x * Scale, evtMotion.y * Scale));
+            }
             else
                 MouseMoveRelative?.Invoke(new Vector2(evtMotion.xrel * Scale, evtMotion.yrel * Scale));
         }
@@ -734,6 +741,11 @@ namespace osu.Framework.Platform.SDL3
         /// Invoked when the user moves the mouse cursor within the window.
         /// </summary>
         public event Action<Vector2>? MouseMove;
+
+        /// <summary>
+        /// Invoked with the mouse position in native window logical coordinates, without framebuffer scaling.
+        /// </summary>
+        internal event Action<Vector2>? MouseMoveLogical;
 
         protected void TriggerMouseMove(float x, float y) => MouseMove?.Invoke(new Vector2(x, y));
 

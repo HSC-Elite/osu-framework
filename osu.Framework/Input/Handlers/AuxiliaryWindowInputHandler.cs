@@ -109,6 +109,7 @@ namespace osu.Framework.Input.Handlers
             {
                 new MousePositionAbsoluteInput
                 {
+                    // Native logical coordinates match the auxiliary drawable; only apply its scene transform.
                     Position = toScreenSpace(position)
                 }.Apply(state, handler);
             }

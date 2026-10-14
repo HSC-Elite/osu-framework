@@ -11,6 +11,7 @@ namespace osu.Framework.Graphics.Rendering
     {
         IGraphicsSurface GraphicsSurface { get; }
         Vector2I ClientSize { get; }
+        Vector2I LogicalSize { get; }
         bool IsClosing { get; }
     }
 

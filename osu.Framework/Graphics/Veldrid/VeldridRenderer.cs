@@ -132,7 +132,9 @@ namespace osu.Framework.Graphics.Veldrid
                     auxiliaryWindow.IsClosing)
                     return;
 
-                Vector2I size = auxiliaryWindow.ClientSize;
+                // Requery pixels each frame to also handle DPI changes without a logical window resize.
+                var drawableSize = auxiliaryWindow.GraphicsSurface.GetDrawableSize();
+                Vector2I size = new Vector2I(drawableSize.Width, drawableSize.Height);
                 if (size.X <= 0 || size.Y <= 0)
                     return;
 
@@ -182,7 +184,7 @@ namespace osu.Framework.Graphics.Veldrid
                     if (rendererDisposed || auxiliaryWindow != window || window.IsClosing)
                         return;
 
-                    auxiliaryPresenter = new AuxiliaryPresenter(veldridDevice, window.GraphicsSurface, window.ClientSize);
+                    auxiliaryPresenter = new AuxiliaryPresenter(veldridDevice, window.GraphicsSurface);
                 }
             }));
         }

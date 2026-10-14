@@ -63,7 +63,7 @@ namespace osu.Framework.Platform.SDL3
             inputWindow = window;
             lastRequestedLogicalSize = LogicalSize;
 
-            inputWindow.MouseMove += onMouseMoved;
+            window.MouseMoveLogical += onMouseMoved;
             inputWindow.MouseDown += onMouseDown;
             inputWindow.MouseUp += onMouseUp;
             inputWindow.KeyDown += onKeyDown;
@@ -154,7 +154,7 @@ namespace osu.Framework.Platform.SDL3
 
             Interlocked.Exchange(ref isClosing, 1);
 
-            inputWindow.MouseMove -= onMouseMoved;
+            window.MouseMoveLogical -= onMouseMoved;
             inputWindow.MouseDown -= onMouseDown;
             inputWindow.MouseUp -= onMouseUp;
             inputWindow.KeyDown -= onKeyDown;
