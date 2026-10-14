@@ -38,7 +38,12 @@ namespace osu.Framework.Graphics
         private RectangleF screenSpaceDrawRectangle;
         private Vector2 frameBufferScale;
         private Vector2 frameBufferSize;
-        private IDrawable rootNodeCached;
+
+        /// <summary>
+        /// Physical size used by external presentation, independent of the drawable's screen-space transform.
+        /// Must be assigned on the update thread before applying state.
+        /// </summary>
+        internal Vector2? FrameBufferSizeOverride { get; set; }
 
         public BufferedDrawNode(IBufferedDrawable source, DrawNode child, BufferedDrawNodeSharedData sharedData)
             : base(source)
@@ -58,7 +63,7 @@ namespace osu.Framework.Graphics
 
             clipDrawRectangle();
 
-            frameBufferSize = new Vector2(MathF.Ceiling(screenSpaceDrawRectangle.Width * frameBufferScale.X), MathF.Ceiling(screenSpaceDrawRectangle.Height * frameBufferScale.Y));
+            frameBufferSize = FrameBufferSizeOverride ?? new Vector2(MathF.Ceiling(screenSpaceDrawRectangle.Width * frameBufferScale.X), MathF.Ceiling(screenSpaceDrawRectangle.Height * frameBufferScale.Y));
 
             DrawRectangle = screenSpaceDrawRectangle;
 
@@ -168,8 +173,10 @@ namespace osu.Framework.Graphics
             // Disable masking for generating the frame buffer since masking will be re-applied
             // when actually drawing later on anyways. This allows more information to be captured
             // in the frame buffer and helps with cached buffers being re-used.
-            RectangleI screenSpaceMaskingRect = new RectangleI((int)Math.Floor(screenSpaceDrawRectangle.X), (int)Math.Floor(screenSpaceDrawRectangle.Y), (int)frameBufferSize.X + 1,
-                (int)frameBufferSize.Y + 1);
+            // Masking remains in screen coordinates; only the viewport and scissor are physical pixels.
+            Vector2 maskingSize = FrameBufferSizeOverride.HasValue ? screenSpaceDrawRectangle.Size : frameBufferSize;
+            RectangleI screenSpaceMaskingRect = new RectangleI((int)Math.Floor(screenSpaceDrawRectangle.X), (int)Math.Floor(screenSpaceDrawRectangle.Y), (int)Math.Ceiling(maskingSize.X) + 1,
+                (int)Math.Ceiling(maskingSize.Y) + 1);
 
             renderer.PushMaskingInfo(new MaskingInfo
             {
@@ -201,22 +208,15 @@ namespace osu.Framework.Graphics
             if (!SharedData.ClipToRootNode || Source == null)
                 return;
 
-            // Get the root node
-            IDrawable rootNode = rootNodeCached;
+            // Resolve on each state application so reparenting cannot retain an old presentation boundary.
+            IDrawable rootNode = Source;
+            while (rootNode.Parent != null && rootNode is not IBufferedDrawNodeClipBoundary)
+                rootNode = rootNode.Parent;
 
-            if (rootNodeCached == null)
-            {
-                rootNode = Source;
-                while (rootNode.Parent != null)
-                    rootNode = rootNode.Parent;
-                rootNodeCached = rootNode;
-            }
-
-            if (rootNode == null)
-                return;
-
-            // Clip the screen space draw rectangle to the bounds of the root node
-            RectangleF clipBounds = new RectangleF(rootNode.ScreenSpaceDrawQuad.TopLeft, rootNode.ScreenSpaceDrawQuad.Size);
+            // Ordinary drawables still clip to the tree root. External descendants clip to their presentation surface.
+            RectangleF clipBounds = rootNode is IBufferedDrawNodeClipBoundary
+                ? rootNode.ScreenSpaceDrawQuad.AABBFloat
+                : new RectangleF(rootNode.ScreenSpaceDrawQuad.TopLeft, rootNode.ScreenSpaceDrawQuad.Size);
             screenSpaceDrawRectangle.Intersect(clipBounds);
         }
 

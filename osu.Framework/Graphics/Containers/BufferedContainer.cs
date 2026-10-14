@@ -46,6 +46,8 @@ namespace osu.Framework.Graphics.Containers
     {
         internal virtual bool DrawToMainBackbuffer => true;
 
+        internal virtual Vector2? PresentationFrameBufferSize => null;
+
         internal virtual void OnFrameBufferDrawn(IFrameBuffer frameBuffer)
         {
         }

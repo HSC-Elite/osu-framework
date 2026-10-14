@@ -47,6 +47,7 @@ namespace osu.Framework.Graphics.Containers
 
             public override void ApplyState()
             {
+                FrameBufferSizeOverride = Source.PresentationFrameBufferSize;
                 base.ApplyState();
 
                 updateVersion = Source.updateVersion;

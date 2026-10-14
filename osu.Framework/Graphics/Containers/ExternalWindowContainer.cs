@@ -19,7 +19,7 @@ using osuTK;
 
 namespace osu.Framework.Graphics.Containers
 {
-    public partial class ExternalWindowContainer : BufferedContainer<Drawable>
+    public partial class ExternalWindowContainer : BufferedContainer<Drawable>, IBufferedDrawNodeClipBoundary
     {
         [Cached(typeof(TextInputSource))]
         private readonly AuxiliaryWindowTextInputSource textInputSource = new AuxiliaryWindowTextInputSource();
@@ -39,6 +39,24 @@ namespace osu.Framework.Graphics.Containers
         protected override bool ComputeIsMaskedAway(RectangleF maskingBounds) => false;
 
         internal override bool DrawToMainBackbuffer => false;
+
+        private Vector2? presentationFrameBufferSize;
+
+        internal override Vector2? PresentationFrameBufferSize => presentationFrameBufferSize;
+
+        protected override void Update()
+        {
+            base.Update();
+
+            // Pixel size may change without a logical resize when crossing displays with different DPI.
+            Vector2I? clientSize = Volatile.Read(ref windowContext)?.ClientSize;
+            Vector2? size = clientSize is { X: > 0, Y: > 0 } pixels ? new Vector2(pixels.X, pixels.Y) : null;
+            if (size == presentationFrameBufferSize)
+                return;
+
+            presentationFrameBufferSize = size;
+            ForceRedraw();
+        }
 
         internal override void OnFrameBufferDrawn(IFrameBuffer frameBuffer)
             => presentationRenderer.SetAuxiliaryPresentationSource(frameBuffer);
