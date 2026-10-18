@@ -81,6 +81,30 @@ namespace osu.Framework.Tests.Graphics
             Assert.That(ordinaryNode.Rectangle, Is.EqualTo(new RectangleF(1000, 600, 280, 120)));
         }
 
+        [TestCase(300, 200)]
+        [TestCase(200, 120)]
+        public void TestExternalWindowClippingAndReparenting(float windowSize, float expectedSize)
+        {
+            using var root = new Container { Size = new Vector2(100) };
+            using var window = new ExternalWindowContainer { Size = new Vector2(windowSize) };
+            using var ancestor = new Container { Size = new Vector2(300) };
+            using var source = new BufferedContainer { Position = new Vector2(80), Size = new Vector2(200) };
+            // Establish the layout hierarchy without loading native windows or GPU resources.
+            window.Parent = root;
+            ancestor.Parent = window;
+            source.Parent = ancestor;
+
+            using var data = new BufferedDrawNodeSharedData(clipToRootNode: true);
+            using var node = new TestDrawNode(source, data);
+            node.ApplyState();
+            Assert.That(node.Rectangle, Is.EqualTo(new RectangleF(80, 80, expectedSize, expectedSize)));
+
+            ancestor.Parent = null!;
+            ancestor.Parent = root;
+            node.ApplyState();
+            Assert.That(node.Rectangle, Is.EqualTo(new RectangleF(80, 80, 20, 20)));
+        }
+
         private partial class ClipBoundary : Container, IBufferedDrawNodeClipBoundary;
 
         private class TestDrawNode : BufferedDrawNode

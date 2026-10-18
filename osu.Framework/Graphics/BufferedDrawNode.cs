@@ -34,6 +34,11 @@ namespace osu.Framework.Graphics
 
         protected RectangleF DrawRectangle { get; private set; }
 
+        /// <summary>
+        /// Projection of the destination framebuffer before this node establishes its own viewport.
+        /// </summary>
+        protected Matrix4 BackbufferProjection { get; private set; }
+
         private Color4 backgroundColour;
         private RectangleF screenSpaceDrawRectangle;
         private Vector2 frameBufferScale;
@@ -87,6 +92,8 @@ namespace osu.Framework.Graphics
 
         protected sealed override void Draw(IRenderer renderer)
         {
+            BackbufferProjection = renderer.ProjectionMatrix;
+
             if (!SharedData.IsInitialised)
                 SharedData.Initialise(renderer);
 

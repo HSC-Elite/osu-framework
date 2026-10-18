@@ -36,8 +36,6 @@ namespace osu.Framework.Graphics
         private IShader blurShader;
         private IShader blendShader;
 
-        private RectangleF backBufferDrawRect;
-
         private Vector2 effectBufferScale;
         private Vector2 effectBufferSize;
 
@@ -47,8 +45,6 @@ namespace osu.Framework.Graphics
         public override void ApplyState()
         {
             base.ApplyState();
-
-            backBufferDrawRect = Source.LastBackBufferDrawRect;
 
             effectBufferScale = Source.EffectBufferScale;
             effectBufferSize = new Vector2(MathF.Ceiling(DrawRectangle.Width * effectBufferScale.X), MathF.Ceiling(DrawRectangle.Height * effectBufferScale.Y));
@@ -103,12 +99,15 @@ namespace osu.Framework.Graphics
 
             renderer.PushDepthInfo(new DepthInfo(false));
 
-            var rect = isBackBuffer
-                ? backBufferDrawRect.RelativeIn(DrawRectangle) * target.Size
-                : new RectangleF(0, 0, current.Texture.Width, current.Texture.Height);
-
             using (BindFrameBuffer(target))
             {
+                renderer.PushViewport(new RectangleI(0, 0, (int)target.Size.X, (int)target.Size.Y));
+
+                // Binding updates the target size for this frame, including the first draw and resizes.
+                var rect = isBackBuffer
+                    ? GetBackbufferRectangle(BackbufferProjection).RelativeIn(DrawRectangle) * target.Size
+                    : new RectangleF(Vector2.Zero, target.Size);
+
                 float radians = float.DegreesToRadians(blurRotation);
 
                 blurParametersBuffer.Data = blurParametersBuffer.Data with
@@ -123,6 +122,7 @@ namespace osu.Framework.Graphics
                 blurShader.Bind();
                 renderer.DrawFrameBuffer(current, rect, ColourInfo.SingleColour(Color4.White));
                 blurShader.Unbind();
+                renderer.PopViewport();
             }
 
             renderer.PopDepthInfo();
@@ -131,6 +131,15 @@ namespace osu.Framework.Graphics
         }
 
         protected override bool RequiresEffectBufferRedraw => true;
+
+        // BufferedDrawNode renders framebuffer contents with an axis-aligned orthographic projection.
+        // Recover its actual screen-space bounds rather than using a dependency provider's layout,
+        // which may describe a different buffer (or the main window).
+        internal static RectangleF GetBackbufferRectangle(Matrix4 projection) => new RectangleF(
+            (-1 - projection.Row3.X) / projection.Row0.X,
+            (1 - projection.Row3.Y) / projection.Row1.Y,
+            2 / projection.Row0.X,
+            -2 / projection.Row1.Y);
 
         private IUniformBuffer<BlendParameters> blendParametersBuffer;
 
