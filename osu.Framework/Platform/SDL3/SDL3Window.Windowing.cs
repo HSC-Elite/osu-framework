@@ -25,7 +25,7 @@ namespace osu.Framework.Platform.SDL3
             config.BindWith(FrameworkSetting.MinimiseOnFocusLossInFullscreen, minimiseOnFocusLoss);
             minimiseOnFocusLoss.BindValueChanged(e =>
             {
-                ScheduleCommand(() => SDL_SetHint(SDL_HINT_VIDEO_MINIMIZE_ON_FOCUS_LOSS, e.NewValue ? "1"u8 : "0"u8).LogErrorIfFailed());
+                ScheduleCommand(() => SDL_SetHint(SDL_HINT_VIDEO_MINIMIZE_ON_FOCUS_LOSS, e.NewValue ? "auto"u8 : "0"u8).LogErrorIfFailed());
             }, true);
 
             fetchDisplays();
@@ -405,11 +405,16 @@ namespace osu.Framework.Platform.SDL3
                     displayModes[i] = modes[i].ToDisplayMode(displayIndex);
             }
 
-            display = new Display(displayIndex,
-                SDL_GetDisplayName(displayID).LogErrorIfFailed(),
-                new Rectangle(rect.x, rect.y, rect.w, rect.h),
-                new Rectangle(usableBounds.x, usableBounds.y, usableBounds.w, usableBounds.h),
-                displayModes);
+            var bounds = new Rectangle(rect.x, rect.y, rect.w, rect.h);
+            var uBounds = new Rectangle(usableBounds.x, usableBounds.y, usableBounds.w, usableBounds.h);
+
+            if (!bounds.Contains(uBounds))
+            {
+                Logger.Log($"Display at index ({displayIndex}) has usable bounds {uBounds} outside of display bounds {bounds}. Clamping.");
+                uBounds.Intersect(bounds);
+            }
+
+            display = new Display(displayIndex, SDL_GetDisplayName(displayID).LogErrorIfFailed(), bounds, uBounds, displayModes);
             return true;
         }
 

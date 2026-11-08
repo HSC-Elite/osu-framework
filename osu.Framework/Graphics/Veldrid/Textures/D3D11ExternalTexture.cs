@@ -49,7 +49,7 @@ namespace osu.Framework.Graphics.Veldrid.Textures
         private int textureSize;
 
         public D3D11ExternalNativeTexture(IRenderer renderer, int width, int height, TextureFilteringMode filteringMode)
-            : base(getVeldridRenderer(renderer), width, height, manualMipmaps: true, filteringMode: filteringMode.ToSamplerFilter())
+            : base(getVeldridRenderer(renderer), width, height, manualMipmaps: true, filteringMode: filteringMode)
         {
             samplerFilter = filteringMode.ToSamplerFilter();
 
@@ -116,7 +116,7 @@ namespace osu.Framework.Graphics.Veldrid.Textures
                 MaximumAnisotropy = 0,
             });
 
-            resourceList = new[] { new VeldridTextureResources(texture, sampler) };
+            resourceList = new[] { new VeldridTextureResources(Renderer, texture, sampler) };
 
             var nativePtr = d3dInfo.GetTexturePointer(texture);
             d3dTargetTexture = MarshallingHelpers.FromPointer<ID3D11Texture2D>(nativePtr).AsNonNull();
